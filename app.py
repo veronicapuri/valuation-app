@@ -5,27 +5,28 @@ import numpy as np
 # ============================
 # 🔐 PASSWORD PROTECTION
 # ============================
-
-PASSWORD = "app password"
-
 def check_password():
     if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
+        st.session_state["authenticated"] = False
 
-    if not st.session_state.authenticated:
-        st.markdown("## 🔐 Secure Access")
+    # If already logged in → continue
+    if st.session_state["authenticated"]:
+        return True
 
-        pwd = st.text_input("Enter Password", type="password", key="password_input")
+    st.markdown("## 🔐 Secure Access")
 
-        if pwd == PASSWORD:
-            st.session_state.authenticated = True
+    pwd = st.text_input("Enter Password", type="password", key="pwd")
+
+    if st.button("Login"):
+        # 🔥 THIS is the key change
+        if pwd == st.secrets["APP_PASSWORD"]:
+            st.session_state["authenticated"] = True
             st.success("Access granted")
             st.rerun()
-
-        elif pwd:
+        else:
             st.error("Incorrect password")
 
-        st.stop()
+    st.stop()
 
 check_password()
 
