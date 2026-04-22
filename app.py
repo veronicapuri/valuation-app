@@ -24,35 +24,43 @@ if not check_password():
     st.stop()
 
 # ---------- APP ----------
-st.title("SME Auto Valuation Tool")
+st.title("📊 SME Auto Valuation Tool")
 
 uploaded_file = st.file_uploader("Upload P&L (Excel)", type=["xlsx"])
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+    df = pd.read_excel(uploaded_file, header=1)  # <-- IMPORTANT FIX
 
-    # ---------- AUTO-DETECT COLUMNS ----------
-    df.columns = [col.lower() for col in df.columns]
+    # Rename columns properly
+    df.columns = ["Line Item", "Amount"]
 
-    line_col = None
-    amount_col = None
+    # Drop empty rows
+    df = df.dropna(how="all")
 
-    for col in df.columns:
-        if "item" in col or "description" in col:
-            line_col = col
-        if "amount" in col or "value" in col or "total" in col:
-            amount_col = col
+    # Remove section headers (like "REVENUE", "EXPENSES")
+    df = df[df["Amount"].notna()]
 
-    if line_col is None or amount_col is None:
-        st.error("Could not detect columns. Please ensure your file has description and amount columns.")
-        st.stop()
+    # ---------- CLEAN AMOUNTS ----------
+    def clean_amount(x):
+        x = str(x)
+        x = x.replace(",", "")
+        if "(" in x and ")" in x:
+            x = "-" + x.replace("(", "").replace(")", "")
+        try:
+            return float(x)
+        except:
+            return None
 
-    df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
+    df["Amount"] = df["Amount"].apply(clean_amount)
+    df = df.dropna(subset=["Amount"])
+
+    st.subheader("Cleaned Data")
+    st.dataframe(df)
 
     # ---------- CLASSIFICATION ----------
     def classify(line):
         line = str(line).lower()
-        if "revenue" in line or "income" in line:
+        if "revenue" in line or "fees" in line or "income" in line:
             return "Revenue"
         elif "cost" in line or "cogs" in line:
             return "COGS"
@@ -62,6 +70,7 @@ if uploaded_file:
     df["Category"] = df["Line Item"].apply(classify)
     df["Adjustment"] = "None"
 
+    st.subheader("Mapping (Editable)")
     edited_df = st.data_editor(df, use_container_width=True)
 
     # ---------- CALCULATIONS ----------
@@ -97,7 +106,13 @@ if uploaded_file:
     high_val = ebitda * high_multiple
 
     # ---------- OUTPUT ----------
-    st.subheader("Results")
-    st.write(f"Revenue: {revenue:,.0f}")
-    st.write(f"EBITDA: {ebitda:,.0f}")
-    st.write(f"Valuation Range: {low_val:,.0f} – {high_val:,.0f}")
+    st.subheader("📈 Results")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Revenue", f"{revenue:,.0f}")
+    col2.metric("EBITDA", f"{ebitda:,.0f}")
+    col3.metric("Margin", f"{margin:.2%}")
+
+    st.subheader("💰 Valuation Range")
+    st.write(f"Low: {low_val:,.0f}")
+    st.write(f"High: {high_val:,.0f}")
