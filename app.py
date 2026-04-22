@@ -72,11 +72,23 @@ def parse_pdf(file):
 # 🔍 DETECTION
 # ============================
 def detect_header(df):
-    for i in range(min(10, len(df))):
-        row = df.iloc[i].astype(str).str.lower()
-        if "amount" in " ".join(row.values):
-            return i
-    return 0
+    best_row = 0
+    best_score = 0
+
+    for i in range(min(15, len(df))):
+        row = df.iloc[i].fillna("").astype(str).str.lower()
+
+        score = sum([
+            "amount" in " ".join(row.values),
+            "line item" in " ".join(row.values),
+            "description" in " ".join(row.values),
+        ])
+
+        if score > best_score:
+            best_score = score
+            best_row = i
+
+    return best_row
 
 def detect_columns(df):
     scores = []
