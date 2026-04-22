@@ -1,17 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
-
-# Optional PDF support
-try:
-    import pdfplumber
-except:
-    pdfplumber = None
-
-from openai import OpenAI
-
-st.set_page_config(layout="wide")
 
 # ============================
 # 🔐 PASSWORD
@@ -33,129 +22,11 @@ def check_password():
 
 check_password()
 
-# ============================
-# 🔐 API SETUP (SAFE)
-# ============================
-api_key = st.secrets.get("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key) if api_key else None
+st.set_page_config(layout="wide")
 
 # ============================
-# 🧼 HELPERS
+# 📂 FILE UPLOAD
 # ============================
-def sanitize(x):
-    return str(x).lower().strip()
-
-def safe_read(file):
-    try:
-        if file.name.endswith(".pdf") and pdfplumber:
-            return parse_pdf(file)
-        return pd.read_excel(file, header=None)
-    except:
-        st.error("File could not be read")
-        return None
-
-def parse_pdf(file):
-    rows = []
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if not text:
-                continue
-            for line in text.split("\n"):
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                try:
-                    amt = float(parts[-1].replace(",", ""))
-                    item = " ".join(parts[:-1])
-                    rows.append([item, amt])
-                except:
-                    continue
-    return pd.DataFrame(rows, columns=["Line Item", "Amount"])
-
-# ============================
-# 🔍 DETECTION
-# ============================
-def detect_header(df):
-    for i in range(min(10, len(df))):
-        row = df.iloc[i].fillna("").astype(str).str.lower()
-        text = " ".join(row.values)
-
-        if "amount" in text or "value" in text:
-            return i
-    return 0
-
-def detect_columns(df):
-    df.columns = df.columns.astype(str).str.strip()
-
-    scores = []
-    for col in df.columns:
-        s = df[col].astype(str)
-        num_score = pd.to_numeric(s, errors="coerce").notna().sum()
-        text_score = s.str.len().mean()
-
-        scores.append((col, num_score, text_score))
-
-    amount_col = max(scores, key=lambda x: x[1])[0]
-    line_col = max([x for x in scores if x[0] != amount_col], key=lambda x: x[2])[0]
-
-    return line_col, amount_col
-
-def standardize(df, line_col, amount_col):
-
-    df.columns = df.columns.astype(str).str.strip()
-
-    if line_col not in df.columns or amount_col not in df.columns:
-        st.warning("Auto-detect failed. Please select manually")
-
-        line_col = st.selectbox("Line Item Column", df.columns)
-        amount_col = st.selectbox("Amount Column", df.columns)
-
-    df = df[[line_col, amount_col]].copy()
-    df.columns = ["Line Item", "Amount"]
-
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
-
-    return df
-
-# ============================
-# 🧠 CLASSIFICATION
-# ============================
-def classify(item):
-    item = sanitize(item)
-
-    if "revenue" in item or "sales" in item:
-        return "Revenue"
-    if "cost" in item:
-        return "COGS"
-    if "salary" in item or "rent" in item or "expense" in item:
-        return "OpEx"
-
-    return "Other"
-
-# ============================
-# 📊 MODEL
-# ============================
-def build_pl(df):
-    revenue = df[df.Category=="Revenue"]["Amount"].sum()
-    cogs = df[df.Category=="COGS"]["Amount"].sum()
-    opex = df[df.Category=="OpEx"]["Amount"].sum()
-
-    ebitda = revenue - cogs - opex
-
-    return revenue, ebitda
-
-def build_bs(df):
-    cash = df[df["Line Item"].str.contains("cash", case=False)]["Amount"].sum()
-    debt = df[df["Line Item"].str.contains("debt|loan", case=False)]["Amount"].sum()
-
-    return cash, debt, debt - cash
-
-# ============================
-# UI
-# ============================
-st.title("📊 Valuation Tool")
-
 pl_file = st.file_uploader("Upload P&L")
 bs_file = st.file_uploader("Upload Balance Sheet")
 
@@ -169,23 +40,159 @@ exit_mult = st.sidebar.number_input("Exit Multiple", 6.5)
 years = st.sidebar.slider("Years", 1, 7, 5)
 
 # ============================
-# PROCESS P&L
+# 🔍 DETECT HEADER
+# ============================
+def detect_header(df):
+    for i in range(min(10, len(df))):
+        row = df.iloc[i].fillna("").astype(str).str.lower()
+        text = " ".join(row.values)
+
+        if "amount" in text or "value" in text:
+            return i
+    return 0
+
+# ============================
+# 🔍 DETECT COLUMNS
+# ============================
+def detect_columns(df):
+
+    scores = []
+
+    for col in df.columns:
+        try:
+            col_data = df[col]
+
+            if not isinstance(col_data, pd.Series):
+                continue
+
+            col_data = col_data.fillna("").astype(str)
+
+            numeric = pd.to_numeric(
+                col_data.str.replace(",", "")
+                        .str.replace("(", "-")
+                        .str.replace(")", ""),
+                errors="coerce"
+            )
+
+            numeric_score = numeric.notna().sum()
+            text_score = col_data.str.len().mean()
+
+            scores.append((col, numeric_score, text_score))
+
+        except:
+            continue
+
+    if len(scores) < 2:
+        st.error("Could not detect columns")
+        st.stop()
+
+    amount_col = max(scores, key=lambda x: x[1])[0]
+    line_col = max([x for x in scores if x[0] != amount_col], key=lambda x: x[2])[0]
+
+    return line_col, amount_col
+
+# ============================
+# 🧼 CLEAN DATAFRAME
+# ============================
+def clean_dataframe(df_raw):
+
+    df = df_raw.copy()
+
+    header_row = detect_header(df)
+
+    df.columns = df.iloc[header_row]
+    df = df[header_row + 1:].reset_index(drop=True)
+
+    df.columns = (
+        pd.Series(df.columns)
+        .fillna("")
+        .astype(str)
+        .str.replace("\n", " ")
+        .str.strip()
+    )
+
+    df.columns = [f"col_{i}" if c == "" else c for i, c in enumerate(df.columns)]
+
+    line_col, amount_col = detect_columns(df)
+
+    return df, line_col, amount_col
+
+# ============================
+# 🧾 STANDARDIZE
+# ============================
+def standardize(df, line_col, amount_col):
+
+    df.columns = df.columns.astype(str).str.strip()
+
+    if line_col not in df.columns or amount_col not in df.columns:
+        st.warning("Auto-detect failed. Select manually")
+
+        line_col = st.selectbox("Line Item Column", df.columns)
+        amount_col = st.selectbox("Amount Column", df.columns)
+
+    df = df[[line_col, amount_col]].copy()
+    df.columns = ["Line Item", "Amount"]
+
+    df["Line Item"] = df["Line Item"].astype(str).str.strip()
+
+    df["Amount"] = (
+        df["Amount"]
+        .astype(str)
+        .str.replace(",", "")
+        .str.replace("(", "-")
+        .str.replace(")", "")
+        .str.strip()
+    )
+
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+
+    return df
+
+# ============================
+# 🧠 CLASSIFY
+# ============================
+def classify(item):
+    item = str(item).lower()
+
+    if "revenue" in item or "sales" in item:
+        return "Revenue"
+    if "cost" in item:
+        return "COGS"
+    if "salary" in item or "rent" in item or "expense" in item:
+        return "OpEx"
+
+    return "Other"
+
+# ============================
+# 📊 BUILD P&L
+# ============================
+def build_pl(df):
+    revenue = df[df.Category=="Revenue"]["Amount"].sum()
+    cogs = df[df.Category=="COGS"]["Amount"].sum()
+    opex = df[df.Category=="OpEx"]["Amount"].sum()
+
+    ebitda = revenue - cogs - opex
+
+    return revenue, ebitda
+
+# ============================
+# 📊 BUILD BS
+# ============================
+def build_bs(df):
+    cash = df[df["Line Item"].str.contains("cash", case=False)]["Amount"].sum()
+    debt = df[df["Line Item"].str.contains("debt|loan", case=False)]["Amount"].sum()
+
+    return cash, debt, debt - cash
+
+# ============================
+# 🚀 PROCESS P&L
 # ============================
 if pl_file:
 
-    raw = safe_read(pl_file)
-    if raw is None:
-        st.stop()
+    df_raw = pd.read_excel(pl_file, header=None)
 
-    if "Line Item" not in raw.columns:
-        h = detect_header(raw)
-        raw.columns = raw.iloc[h]
-        raw = raw[h+1:]
-
-    raw.columns = raw.columns.astype(str).str.strip()
-
-    line_col, amt_col = detect_columns(raw)
-    df = standardize(raw, line_col, amt_col)
+    df_clean, line_col, amt_col = clean_dataframe(df_raw)
+    df = standardize(df_clean, line_col, amt_col)
 
     df["Category"] = df["Line Item"].apply(classify)
 
@@ -198,23 +205,14 @@ if pl_file:
     st.metric("EBITDA", f"{ebitda:,.0f}")
 
 # ============================
-# PROCESS BS
+# 🚀 PROCESS BS
 # ============================
 if bs_file:
 
-    raw_bs = safe_read(bs_file)
-    if raw_bs is None:
-        st.stop()
+    df_raw_bs = pd.read_excel(bs_file, header=None)
 
-    if "Line Item" not in raw_bs.columns:
-        h = detect_header(raw_bs)
-        raw_bs.columns = raw_bs.iloc[h]
-        raw_bs = raw_bs[h+1:]
-
-    raw_bs.columns = raw_bs.columns.astype(str).str.strip()
-
-    line_col, amt_col = detect_columns(raw_bs)
-    df_bs = standardize(raw_bs, line_col, amt_col)
+    df_clean_bs, line_col, amt_col = clean_dataframe(df_raw_bs)
+    df_bs = standardize(df_clean_bs, line_col, amt_col)
 
     st.subheader("Balance Sheet")
     st.dataframe(df_bs)
@@ -224,7 +222,7 @@ if bs_file:
     st.metric("Net Debt", f"{net_debt:,.0f}")
 
 # ============================
-# FORECAST + VALUATION
+# 📈 FORECAST + VALUATION
 # ============================
 if pl_file:
 
