@@ -112,21 +112,21 @@ debt_amort = st.sidebar.slider("Debt Repayment (%)", 0, 30, 10)
 # =============================
 if pl_file:
     def load_excel(file):
-    df = pd.read_excel(file, header=None)
+        df = pd.read_excel(file, header=None)
 
-    for i in range(len(df)):
-        row = df.iloc[i].astype(str).str.lower()
+        for i in range(len(df)):
+            row = df.iloc[i].astype(str).str.lower()
 
-        if "line item" in " ".join(row.values) and ("amount" in " ".join(row.values) or "value" in " ".join(row.values)):
-            df.columns = df.iloc[i]
-            df = df[i+1:]
-            df = df.reset_index(drop=True)
-            return df
+            if "line item" in " ".join(row.values) and ("amount" in " ".join(row.values) or "value" in " ".join(row.values)):
+                df.columns = df.iloc[i]
+                df = df[i+1:]
+                df = df.reset_index(drop=True)
+                return df
 
-    return df  # fallback
+        return df  # fallback
 
 
-df_raw = load_excel(pl_file)
+    df_raw = load_excel(pl_file)
 
     st.subheader("Raw P&L Preview")
     st.dataframe(df_raw.head())
