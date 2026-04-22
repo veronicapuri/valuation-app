@@ -234,121 +234,159 @@ def load_file(file):
 
     # PDF
     elif name.endswith(".pdf"):
-        import pdfplumber
 
-        text_data = []
-        table_data = []
+        df = smart_pdf_extract(file)
+
+        return df
+    def smart_pdf_extract(file):
+
+        import pdfplumber
+        import pandas as pd
+        import re
+
+        all_results = []
 
         with pdfplumber.open(file) as pdf:
             for page in pdf.pages:
-                table = page.extract_table()
-                if table:
-                    table_data.extend(table)
 
-                text = page.extract_text()
-                if text:
-                    text_data.append(text)
+                # ===== 1. TABLE EXTRACTION =====
+                try:
+                    tables = page.extract_tables()
+                    for table in tables:
+                        df = pd.DataFrame(table)
 
-        # =========================
-        # 1. Try table extraction
-        # =========================
-        if table_data:
-            return pd.DataFrame(table_data)
+                        if df.shape[1] >= 2:
+                            df = df.fillna("")
 
-        # =========================
-        # 2. Try text parsing
-        # =========================
-        if text_data:
-            lines = "\n".join(text_data).split("\n")
+                            col_scores = []
+                            for col in df.columns:
+                                numeric = pd.to_numeric(
+                                    df[col].astype(str).str.replace(",", ""),
+                                    errors="coerce"
+                                )
+                                col_scores.append((col, numeric.notna().sum()))
 
-            parsed = []
-            buffer_label = None
+                            if col_scores:
+                                amount_col = max(col_scores, key=lambda x: x[1])[0]
+                                line_col = [c for c in df.columns if c != amount_col][0]
 
-            for line in lines:
-                line = line.strip()
+                                clean = df[[line_col, amount_col]].copy()
+                                clean.columns = ["Line Item", "Amount"]
 
-                if not line:
-                    continue
+                                clean["Amount"] = pd.to_numeric(
+                                    clean["Amount"].astype(str).str.replace(",", ""),
+                                    errors="coerce"
+                                ).fillna(0)
 
-                num = re.findall(r"[-\(\)\d,\.]+", line)
+                                if clean["Amount"].abs().sum() > 0:
+                                    all_results.append(clean)
+                except:
+                    pass
 
-                if num:
-                    try:
-                        value = num[-1]
-                        value = value.replace(",", "").replace("(", "-").replace(")", "")
-                        value = float(value)
+                # ===== 2. LAYOUT PARSING =====
+                try:
+                    words = page.extract_words(use_text_flow=True)
+    
+                    if words:
+                        mid_x = page.width * 0.6
 
-                        label = line.replace(num[-1], "").strip()
+                        rows = {}
+                        for w in words:
+                            y = round(w["top"], 0)
 
-                        if label:
-                            parsed.append([label, value])
-                            buffer_label = None
-                        elif buffer_label:
-                            parsed.append([buffer_label, value])
-                            buffer_label = None
+                            if y not in rows:
+                                rows[y] = {"left": [], "right": []}
 
-                    except:
-                        continue
-                else:
-                    buffer_label = line
+                            if float(w["x0"]) < mid_x:
+                                rows[y]["left"].append(w["text"])
+                            else:
+                                rows[y]["right"].append(w["text"])
 
-            if parsed:
-                return pd.DataFrame(parsed)
+                        parsed = []
+                        for r in rows.values():
+                            left = " ".join(r["left"]).strip()
+                            right = " ".join(r["right"]).strip()
 
-        # =========================
-        # 3. OCR fallback (NEW)
-        # =========================
-        try:
-            import fitz  # PyMuPDF
-            import pytesseract
-            from PIL import Image
+                            if not left:
+                                continue
 
-            file.seek(0)
-            doc = fitz.open(stream=file.read(), filetype="pdf")
+                            nums = re.findall(r"[-]?\(?\d[\d,]*\)?", right)
 
-            ocr_text = []
+                            if nums:
+                                val = nums[0]
+                                val = val.replace(",", "").replace("(", "-").replace(")", "")
 
-            for page in doc:
-                pix = page.get_pixmap()
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                text = pytesseract.image_to_string(img)
-                ocr_text.append(text)
+                                try:
+                                    parsed.append([left, float(val)])
+                                except:
+                                    pass
 
-            if ocr_text:
-                lines = "\n".join(ocr_text).split("\n")
+                        if parsed:
+                            df = pd.DataFrame(parsed, columns=["Line Item", "Amount"])
+                            all_results.append(df)
+                except:
+                    pass
 
-                parsed = []
-                for line in lines:
-                    parts = line.split()
+                # ===== 3. TEXT PARSING =====
+                try:
+                    text = page.extract_text()
 
-                    if len(parts) >= 2:
-                        try:
-                            value = parts[-1].replace(",", "").replace("(", "-").replace(")", "")
-                            value = float(value)
-                            label = " ".join(parts[:-1])
-                            parsed.append([label, value])
-                        except:
-                            continue
+                    if text:
+                        lines = text.split("\n")
+                        parsed = []
 
-                if parsed:
-                    return pd.DataFrame(parsed)
+                        for line in lines:
+                            match = re.search(r"[-]?\(?\d[\d,]*\)?", line)
 
-        except:
-            pass
+                            if match:
+                                val = match.group(0)
+                                val = val.replace(",", "").replace("(", "-").replace(")", "")
+    
+                                label = line.replace(match.group(0), "").strip()
+    
+                                try:
+                                    parsed.append([label, float(val)])
+                                except:
+                                    pass
+    
+                        if parsed:
+                            df = pd.DataFrame(parsed, columns=["Line Item", "Amount"])
+                            all_results.append(df)
+                except:
+                    pass
+
+        if not all_results:
+            return None
+    
+        # pick best result
+        best = max(all_results, key=lambda x: x["Amount"].abs().sum())
+
+        return best
 
         # =========================
         # FAIL SAFE
         # =========================
-        st.error("❌ Could not extract usable data from PDF")
-        st.stop()
-        
-# ============================
+        if pl_file:
+            df_raw = load_file(pl_file)
+
+            if df_raw is None:
+                st.error("❌ Could not extract usable data from file")
+                st.stop()
+
+            df, lc, ac = clean_dataframe(df_raw)
+            df = standardize(df, lc, ac)
+            df = classify_df(df)
+
 # PROCESS P&L
-# ============================
 revenue, ebitda = 0, 0
 
 if pl_file:
     df_raw = load_file(pl_file)
+
+    if df_raw is None:
+        st.error("❌ Could not extract usable data from file")
+        st.stop()
+
     df, lc, ac = clean_dataframe(df_raw)
     df = standardize(df, lc, ac)
     df = classify_df(df)
