@@ -229,52 +229,55 @@ def load_file(file):
         return pd.read_excel(file, header=None, engine="openpyxl")
 
     # CSV
-    if name.endswith(".csv"):
+    elif name.endswith(".csv"):
         return pd.read_csv(file, header=None)
 
     # PDF
-    if name.endswith(".pdf"):
-    import pdfplumber
+    elif name.endswith(".pdf"):
+        import pdfplumber   # ✅ MUST be indented
 
-    text_data = []
-    table_data = []
+        text_data = []
+        table_data = []
 
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            table = page.extract_table()
-            if table:
-                table_data.extend(table)
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                table = page.extract_table()
+                if table:
+                    table_data.extend(table)
 
-            text = page.extract_text()
-            if text:
-                text_data.append(text)
+                text = page.extract_text()
+                if text:
+                    text_data.append(text)
 
-    if table_data:
-        return pd.DataFrame(table_data)
+        if table_data:
+            return pd.DataFrame(table_data)
 
-    if text_data:
-        lines = "\n".join(text_data).split("\n")
+        if text_data:
+            lines = "\n".join(text_data).split("\n")
+            parsed = []
 
-        parsed = []
+            for line in lines:
+                parts = line.split()
 
-        for line in lines:
-            parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        value = parts[-1].replace(",", "").replace("(", "-").replace(")", "")
+                        value = float(value)
 
-            if len(parts) >= 2:
-                try:
-                    value = parts[-1].replace(",", "").replace("(", "-").replace(")", "")
-                    value = float(value)
+                        label = " ".join(parts[:-1])
+                        parsed.append([label, value])
+                    except:
+                        continue
 
-                    label = " ".join(parts[:-1])
-                    parsed.append([label, value])
-                except:
-                    continue
+            if parsed:
+                return pd.DataFrame(parsed)
 
-        if parsed:
-            return pd.DataFrame(parsed)
+        st.error("❌ Could not extract usable data from PDF")
+        st.stop()
 
-    st.error("❌ Could not extract usable data from PDF")
-    st.stop()
+    else:
+        st.error("Unsupported file type")
+        st.stop()
     
 # ============================
 # PROCESS P&L
