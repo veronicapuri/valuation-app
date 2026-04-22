@@ -5,7 +5,7 @@ import numpy as np
 st.set_page_config(layout="wide")
 
 # ============================
-# 🔐 PASSWORD (FROM SECRETS)
+# 🔐 PASSWORD PROTECTION
 # ============================
 
 def check_password():
@@ -39,7 +39,6 @@ def detect_header(df):
         if ("line" in text or "description" in text or "account" in text) and \
            ("amount" in text or "value" in text or "total" in text):
             return i
-
     return 0
 
 
@@ -99,7 +98,7 @@ def classify(item):
 
     item = item.lower()
 
-    if "revenue" in item or "income" in item:
+    if "revenue" in item or "income" in item or "sales" in item:
         return "Revenue"
     elif "cost" in item or "cogs" in item:
         return "COGS"
@@ -110,7 +109,7 @@ def classify(item):
 
 
 # ============================
-# 🎯 UI LAYOUT
+# 🎯 UI
 # ============================
 
 st.title("📊 SME Valuation & LBO Tool")
@@ -120,14 +119,14 @@ st.sidebar.header("Deal Assumptions")
 
 entry_multiple = st.sidebar.number_input("Entry Multiple", value=5.0)
 exit_multiple = st.sidebar.number_input("Exit Multiple", value=6.5)
-holding_years = st.sidebar.slider("Holding Period", 1, 7, 3)
+holding_years = st.sidebar.slider("Holding Period", 1, 7, 5)
 
 growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10) / 100
 target_margin = st.sidebar.slider("Target EBITDA Margin (%)", 0, 50, 20) / 100
 
 adjustments = st.sidebar.number_input("EBITDA Adjustments", value=0.0)
 
-# File upload
+# Upload
 col1, col2 = st.columns(2)
 
 with col1:
@@ -143,6 +142,9 @@ with col2:
 if pl_file:
     df_raw = pd.read_excel(pl_file, header=None)
 
+    st.subheader("Raw P&L Preview")
+    st.dataframe(df_raw.head())
+
     df, auto_line, auto_amount = clean_dataframe(df_raw)
 
     cols = list(df.columns)
@@ -150,8 +152,19 @@ if pl_file:
     line_col = st.selectbox("Line Item Column", cols, index=cols.index(auto_line))
     amount_col = st.selectbox("Amount Column", cols, index=cols.index(auto_amount))
 
+    if line_col == amount_col:
+        st.error("Columns must be different")
+        st.stop()
+
     df = standardize(df, line_col, amount_col)
     df["Category"] = df["Line Item"].apply(classify)
+
+    st.subheader("📊 Cleaned P&L")
+    st.dataframe(df)
+
+    summary = df.groupby("Category")["Amount"].sum().reset_index()
+    st.subheader("📊 Category Breakdown")
+    st.dataframe(summary)
 
     revenue = df[df["Category"] == "Revenue"]["Amount"].sum()
     cogs = df[df["Category"] == "COGS"]["Amount"].sum()
@@ -164,7 +177,7 @@ if pl_file:
     st.write(f"EBITDA: {ebitda:,.0f}")
 
 # ============================
-# 📊 PROCESS BS
+# 📊 BALANCE SHEET
 # ============================
 
 net_debt = 0
@@ -172,36 +185,66 @@ net_debt = 0
 if bs_file:
     df_raw_bs = pd.read_excel(bs_file, header=None)
 
+    st.subheader("Balance Sheet Preview")
+    st.dataframe(df_raw_bs.head())
+
     df_bs, auto_line_bs, auto_amount_bs = clean_dataframe(df_raw_bs)
 
     cols_bs = list(df_bs.columns)
 
-    line_col_bs = st.selectbox("BS Line", cols_bs, index=cols_bs.index(auto_line_bs))
+    line_col_bs = st.selectbox("BS Line Item", cols_bs, index=cols_bs.index(auto_line_bs))
     amount_col_bs = st.selectbox("BS Amount", cols_bs, index=cols_bs.index(auto_amount_bs))
 
+    if line_col_bs == amount_col_bs:
+        st.error("Columns must be different")
+        st.stop()
+
     df_bs = standardize(df_bs, line_col_bs, amount_col_bs)
+
+    st.subheader("📊 Cleaned Balance Sheet")
+    st.dataframe(df_bs)
 
     cash = df_bs[df_bs["Line Item"].str.contains("cash", case=False)]["Amount"].sum()
     debt = df_bs[df_bs["Line Item"].str.contains("debt|loan", case=False)]["Amount"].sum()
 
     net_debt = debt - cash
 
-    st.subheader("📌 Balance Sheet")
+    st.subheader("📌 Balance Sheet Summary")
     st.write(f"Cash: {cash:,.0f}")
     st.write(f"Debt: {debt:,.0f}")
     st.write(f"Net Debt: {net_debt:,.0f}")
 
 # ============================
-# 📈 FORECAST
+# 📈 FORECAST (5 YEARS)
 # ============================
 
 if pl_file:
-    forecast_revenue = revenue * ((1 + growth_rate) ** holding_years)
-    forecast_ebitda = forecast_revenue * target_margin
+    years = list(range(1, holding_years + 1))
+    forecast_data = []
 
-    st.subheader("📈 Forecast")
-    st.write(f"Forecast Revenue: {forecast_revenue:,.0f}")
-    st.write(f"Forecast EBITDA: {forecast_ebitda:,.0f}")
+    current_revenue = revenue
+
+    for y in years:
+        current_revenue *= (1 + growth_rate)
+        ebitda_y = current_revenue * target_margin
+
+        forecast_data.append({
+            "Year": f"Year {y}",
+            "Revenue": current_revenue,
+            "EBITDA": ebitda_y,
+            "Margin %": (ebitda_y / current_revenue) * 100
+        })
+
+    forecast_df = pd.DataFrame(forecast_data)
+
+    st.subheader("📈 5-Year Forecast")
+    st.dataframe(forecast_df.style.format({
+        "Revenue": "{:,.0f}",
+        "EBITDA": "{:,.0f}",
+        "Margin %": "{:.1f}%"
+    }))
+
+    forecast_ebitda = forecast_df.iloc[-1]["EBITDA"]
 
 # ============================
 # 💰 VALUATION
@@ -225,6 +268,14 @@ if pl_file:
     with col2:
         st.metric("Exit EV", f"{exit_ev:,.0f}")
         st.metric("Exit Equity", f"{exit_equity:,.0f}")
+
+    bridge = pd.DataFrame({
+        "Metric": ["Entry EV", "Exit EV", "Net Debt", "Entry Equity", "Exit Equity"],
+        "Value": [entry_ev, exit_ev, net_debt, entry_equity, exit_equity]
+    })
+
+    st.subheader("📊 Value Bridge")
+    st.dataframe(bridge)
 
 # ============================
 # 📊 RETURNS
