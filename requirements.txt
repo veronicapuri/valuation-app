@@ -3,3 +3,4 @@ pandas
 numpy
 openai
 pdfplumber
+pdfminer.six
