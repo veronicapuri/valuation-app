@@ -19,6 +19,7 @@ def check_password():
     else:
         return True
 
+
 if not check_password():
     st.stop()
 
@@ -30,24 +31,25 @@ uploaded_file = st.file_uploader("Upload P&L (Excel)", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
-# --- Auto-detect columns ---
-df.columns = [col.lower() for col in df.columns]
+    # ---------- AUTO-DETECT COLUMNS ----------
+    df.columns = [col.lower() for col in df.columns]
 
-line_col = None
-amount_col = None
+    line_col = None
+    amount_col = None
 
-for col in df.columns:
-    if "item" in col or "description" in col:
-        line_col = col
-    if "amount" in col or "value" in col or "total" in col:
-        amount_col = col
+    for col in df.columns:
+        if "item" in col or "description" in col:
+            line_col = col
+        if "amount" in col or "value" in col or "total" in col:
+            amount_col = col
 
-if line_col is None or amount_col is None:
-    st.error("Could not detect columns. Please ensure your file has description and amount columns.")
-    st.stop()
+    if line_col is None or amount_col is None:
+        st.error("Could not detect columns. Please ensure your file has description and amount columns.")
+        st.stop()
 
-df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
+    df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
 
+    # ---------- CLASSIFICATION ----------
     def classify(line):
         line = str(line).lower()
         if "revenue" in line or "income" in line:
@@ -62,6 +64,7 @@ df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
 
     edited_df = st.data_editor(df, use_container_width=True)
 
+    # ---------- CALCULATIONS ----------
     revenue = edited_df[edited_df["Category"] == "Revenue"]["Amount"].sum()
     cogs = edited_df[edited_df["Category"] == "COGS"]["Amount"].sum()
     opex = edited_df[edited_df["Category"] == "OpEx"]["Amount"].sum()
@@ -70,6 +73,7 @@ df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
     ebitda = revenue - cogs - abs(opex) + abs(addbacks)
     margin = ebitda / revenue if revenue != 0 else 0
 
+    # ---------- SCORING ----------
     if margin > 0.25:
         score = 3
     elif margin > 0.15:
@@ -92,6 +96,7 @@ df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
     low_val = ebitda * low_multiple
     high_val = ebitda * high_multiple
 
+    # ---------- OUTPUT ----------
     st.subheader("Results")
     st.write(f"Revenue: {revenue:,.0f}")
     st.write(f"EBITDA: {ebitda:,.0f}")
