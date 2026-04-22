@@ -90,23 +90,62 @@ def detect_header(df):
 
     return best_row
 
+raw.columns = (
+    raw.columns
+    .astype(str)
+    .str.strip()
+    .str.replace("\n", " ")
+)
+
 def detect_columns(df):
+
+    df.columns = df.columns.astype(str).str.strip()
+
     scores = []
+
     for col in df.columns:
-        data = df[col].astype(str)
-        num_score = pd.to_numeric(data, errors="coerce").notna().sum()
-        text_score = data.str.len().mean()
-        scores.append((col, num_score, text_score))
+        series = df[col].astype(str)
 
+        numeric_score = pd.to_numeric(series, errors="coerce").notna().sum()
+        text_score = series.str.len().mean()
+
+        scores.append((col, numeric_score, text_score))
+
+    # best numeric column = amount
     amount_col = max(scores, key=lambda x: x[1])[0]
-    line_col = max([x for x in scores if x[0] != amount_col], key=lambda x: x[2])[0]
-    return line_col, amount_col
 
+    # best text column = line item
+    text_candidates = [x for x in scores if x[0] != amount_col]
+    line_col = max(text_candidates, key=lambda x: x[2])[0]
+
+    return line_col, amount_col
+    
 def standardize(df, line_col, amount_col):
+
+    df.columns = df.columns.astype(str).str.strip()
+
+    # 🔐 SAFETY CHECK
+    if line_col not in df.columns or amount_col not in df.columns:
+        st.error("Column detection failed. Please select columns manually.")
+        st.write("Detected columns:", df.columns.tolist())
+        st.stop()
+
     df = df[[line_col, amount_col]].copy()
+
     df.columns = ["Line Item", "Amount"]
+
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+
     return df
+
+if line_col not in df.columns or amount_col not in df.columns:
+
+    st.warning("Auto-detect failed. Please select manually.")
+
+    line_col = st.selectbox("Select Line Item Column", df.columns)
+    amount_col = st.selectbox("Select Amount Column", df.columns)
+
+    df = df[[line_col, amount_col]].copy()
 
 # ============================
 # 🧠 RULE CLASSIFIER
