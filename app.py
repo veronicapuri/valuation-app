@@ -1,179 +1,206 @@
 import streamlit as st
 import pandas as pd
 
-# ---------- PASSWORD ----------
+# ---------------------------
+# 🔐 PASSWORD PROTECTION
+# ---------------------------
 def check_password():
     def password_entered():
-        if st.session_state["password"] == "valuationrun123":
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
             st.session_state["password_correct"] = True
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.text_input("Enter password", type="password", key="password", on_change=password_entered)
+        st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
         return False
+
     elif not st.session_state["password_correct"]:
-        st.text_input("Enter password", type="password", key="password", on_change=password_entered)
+        st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
         st.error("Incorrect password")
         return False
+
     else:
         return True
+
 
 if not check_password():
     st.stop()
 
-# ---------- APP ----------
+# ---------------------------
+# 🎯 PAGE CONFIG
+# ---------------------------
+st.set_page_config(page_title="SME Valuation Tool", layout="wide")
+
 st.title("📊 SME Valuation & Deal Analysis Tool")
 
-# ---------- SIDEBAR ASSUMPTIONS ----------
-st.sidebar.header("📊 Deal Assumptions")
+# ---------------------------
+# 🧾 SIDEBAR INPUTS
+# ---------------------------
+st.sidebar.header("Deal Assumptions")
 
 entry_multiple = st.sidebar.number_input("Entry Multiple", value=5.0)
 exit_multiple = st.sidebar.number_input("Exit Multiple", value=6.5)
 holding_period = st.sidebar.slider("Holding Period (Years)", 1, 7, 3)
 
-growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 30, 10) / 100
-margin_target = st.sidebar.slider("Target EBITDA Margin (%)", 5, 50, 20) / 100
+growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)
+target_margin = st.sidebar.slider("Target EBITDA Margin (%)", 0, 50, 20)
+ebitda_adjustments = st.sidebar.number_input("EBITDA Adjustments", value=0.0)
 
-ebitda_adjustment = st.sidebar.number_input("EBITDA Adjustments", value=0.0)
+# ---------------------------
+# 📂 FILE UPLOAD
+# ---------------------------
+st.subheader("Upload Files")
 
-# ---------- FILE UPLOAD ----------
-pnl_file = st.file_uploader("Upload P&L", type=["xlsx"])
+pl_file = st.file_uploader("Upload P&L", type=["xlsx"])
 bs_file = st.file_uploader("Upload Balance Sheet", type=["xlsx"])
 
-# ---------- CLEAN FUNCTION ----------
-def clean_amount(x):
-    x = str(x)
-    x = x.replace(",", "")
-    if "(" in x and ")" in x:
-        x = "-" + x.replace("(", "").replace(")", "")
-    try:
-        return float(x)
-    except:
+# ---------------------------
+# 🧹 CLEANING FUNCTION
+# ---------------------------
+def clean_data(df):
+    df.columns = [c.lower().strip() for c in df.columns]
+
+    line_col, amount_col = None, None
+
+    for col in df.columns:
+        if "line" in col or "item" in col or "description" in col:
+            line_col = col
+        if "amount" in col or "value" in col:
+            amount_col = col
+
+    if not line_col or not amount_col:
+        st.error("Could not detect columns. Need 'Line Item' and 'Amount'")
         return None
 
-# ---------- PROCESS P&L ----------
-if pnl_file:
-    pnl = pd.read_excel(pnl_file)
-    pnl = pnl.iloc[:, :2]
-    pnl.columns = ["Line Item", "Amount"]
-    pnl = pnl.dropna(subset=["Line Item"])
+    df = df[[line_col, amount_col]]
+    df.columns = ["Line Item", "Amount"]
 
-    pnl["Amount"] = pnl["Amount"].apply(clean_amount)
-    pnl = pnl.dropna(subset=["Amount"])
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
+    df = df.dropna()
 
-    st.subheader("📊 Cleaned P&L")
-    st.dataframe(pnl)
+    return df
 
-    def classify(line):
-        line = str(line).lower()
-        if "revenue" in line or "income" in line or "fees" in line:
-            return "Revenue"
-        elif "cost" in line or "cogs" in line:
-            return "COGS"
-        else:
-            return "OpEx"
+# ---------------------------
+# 📊 PROCESS P&L
+# ---------------------------
+if pl_file:
+    pl_df = pd.read_excel(pl_file)
+    pl_df = clean_data(pl_df)
 
-    pnl["Category"] = pnl["Line Item"].apply(classify)
+    if pl_df is not None:
 
-    st.subheader("🧩 P&L Mapping")
-    pnl = st.data_editor(pnl)
+        st.subheader("Cleaned P&L")
+        st.dataframe(pl_df)
 
-    revenue = pnl[pnl["Category"] == "Revenue"]["Amount"].sum()
-    cogs = pnl[pnl["Category"] == "COGS"]["Amount"].sum()
-    opex = pnl[pnl["Category"] == "OpEx"]["Amount"].sum()
+        def classify(line):
+            line = line.lower()
 
-    ebitda = revenue - cogs - abs(opex)
-    adj_ebitda = ebitda + ebitda_adjustment
+            if "revenue" in line or "sales" in line:
+                return "Revenue"
+            elif "cogs" in line or "cost of goods" in line:
+                return "COGS"
+            else:
+                return "OpEx"
 
-    margin = adj_ebitda / revenue if revenue != 0 else 0
+        pl_df["Category"] = pl_df["Line Item"].apply(classify)
 
-    st.subheader("📌 P&L Breakdown")
-    st.write(f"Revenue: {revenue:,.0f}")
-    st.write(f"COGS: {cogs:,.0f}")
-    st.write(f"OpEx: {opex:,.0f}")
-    st.write(f"Adjusted EBITDA: {adj_ebitda:,.0f}")
-    st.write(f"Margin: {margin:.2%}")
+        revenue = pl_df[pl_df["Category"] == "Revenue"]["Amount"].sum()
+        cogs = pl_df[pl_df["Category"] == "COGS"]["Amount"].sum()
+        opex = pl_df[pl_df["Category"] == "OpEx"]["Amount"].sum()
 
-# ---------- PROCESS BALANCE SHEET ----------
+        ebitda = revenue - cogs - opex + ebitda_adjustments
+        margin = ebitda / revenue if revenue != 0 else 0
+
+        st.subheader("📌 P&L Breakdown")
+        st.write(f"Revenue: {revenue:,.0f}")
+        st.write(f"COGS: {cogs:,.0f}")
+        st.write(f"OpEx: {opex:,.0f}")
+        st.write(f"Adjusted EBITDA: {ebitda:,.0f}")
+        st.write(f"Margin: {margin:.2%}")
+
+# ---------------------------
+# 🏦 PROCESS BALANCE SHEET
+# ---------------------------
 net_debt = 0
 
 if bs_file:
-    bs = pd.read_excel(bs_file)
-    bs = bs.iloc[:, :2]
-    bs.columns = ["Line Item", "Amount"]
-    bs = bs.dropna(subset=["Line Item"])
+    bs_df = pd.read_excel(bs_file)
+    bs_df = clean_data(bs_df)
 
-    bs["Amount"] = bs["Amount"].apply(clean_amount)
-    bs = bs.dropna(subset=["Amount"])
+    if bs_df is not None:
 
-    st.subheader("📊 Balance Sheet")
-    st.dataframe(bs)
+        st.subheader("Balance Sheet")
+        st.dataframe(bs_df)
 
-    cash = bs[bs["Line Item"].str.contains("cash|bank", case=False)]["Amount"].sum()
-    debt = bs[bs["Line Item"].str.contains("loan|debt|borrow", case=False)]["Amount"].sum()
-    receivables = bs[bs["Line Item"].str.contains("receivable", case=False)]["Amount"].sum()
-    payables = bs[bs["Line Item"].str.contains("payable", case=False)]["Amount"].sum()
+        def classify_bs(line):
+            line = line.lower()
 
-    net_debt = debt - cash
+            if "cash" in line:
+                return "Cash"
+            elif "debt" in line or "loan" in line:
+                return "Debt"
+            else:
+                return "Other"
 
-    st.subheader("📊 Balance Sheet Breakdown")
-    st.write(f"Cash: {cash:,.0f}")
-    st.write(f"Debt: {debt:,.0f}")
-    st.write(f"Net Debt: {net_debt:,.0f}")
+        bs_df["Category"] = bs_df["Line Item"].apply(classify_bs)
 
-# ---------- VALUATION & FORECAST ----------
-if pnl_file:
+        cash = bs_df[bs_df["Category"] == "Cash"]["Amount"].sum()
+        debt = bs_df[bs_df["Category"] == "Debt"]["Amount"].sum()
 
-    # Forecast revenue
-    forecast_revenue = revenue
-    for i in range(holding_period):
-        forecast_revenue *= (1 + growth_rate)
+        net_debt = debt - cash
 
-    forecast_ebitda = forecast_revenue * margin_target
+        st.subheader("📌 Balance Sheet Breakdown")
+        st.write(f"Cash: {cash:,.0f}")
+        st.write(f"Debt: {debt:,.0f}")
+        st.write(f"Net Debt: {net_debt:,.0f}")
 
-    # Entry & Exit
-    entry_value = adj_ebitda * entry_multiple
-    exit_value = forecast_ebitda * exit_multiple
+# ---------------------------
+# 📈 VALUATION + FORECAST
+# ---------------------------
+if pl_file and pl_df is not None:
 
-    # Equity value (entry)
-    equity_entry = entry_value - net_debt
-    equity_exit = exit_value - net_debt
+    forecast_revenue = revenue * ((1 + growth_rate / 100) ** holding_period)
+    forecast_ebitda = forecast_revenue * (target_margin / 100)
 
-    # Returns
-    irr = (equity_exit / equity_entry) ** (1 / holding_period) - 1 if equity_entry > 0 else 0
-    moic = equity_exit / equity_entry if equity_entry > 0 else 0
+    entry_ev = ebitda * entry_multiple
+    exit_ev = forecast_ebitda * exit_multiple
 
-    # ---------- MULTIPLE BREAKDOWN ----------
-    st.subheader("📊 Multiples")
-    st.write(f"Entry Multiple: {entry_multiple:.1f}x")
-    st.write(f"Exit Multiple: {exit_multiple:.1f}x")
+    entry_equity = entry_ev - net_debt
+    exit_equity = exit_ev - net_debt
 
-    # ---------- FORECAST ----------
-    st.subheader("📈 Forecast")
+    moic = exit_equity / entry_equity if entry_equity != 0 else 0
+    irr = (moic ** (1 / holding_period) - 1) if holding_period > 0 else 0
+
+    st.subheader("📊 Valuation")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Enterprise Value (Entry)", f"{entry_ev:,.0f}")
+        st.metric("Equity Value (Entry)", f"{entry_equity:,.0f}")
+
+    with col2:
+        st.metric("Enterprise Value (Exit)", f"{exit_ev:,.0f}")
+        st.metric("Equity Value (Exit)", f"{exit_equity:,.0f}")
+
+    st.subheader("📈 Returns")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("IRR", f"{irr:.2%}")
+
+    with col2:
+        st.metric("MOIC", f"{moic:.2f}x")
+
+    st.subheader("📌 Forecast")
+
     st.write(f"Forecast Revenue: {forecast_revenue:,.0f}")
     st.write(f"Forecast EBITDA: {forecast_ebitda:,.0f}")
 
-    # ---------- VALUES ----------
-    st.subheader("💰 Valuation")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Enterprise Value (Entry)", f"{entry_value:,.0f}")
-    col2.metric("Enterprise Value (Exit)", f"{exit_value:,.0f}")
-
-    col3, col4 = st.columns(2)
-    col3.metric("Equity Value (Entry)", f"{equity_entry:,.0f}")
-    col4.metric("Equity Value (Exit)", f"{equity_exit:,.0f}")
-
-    # ---------- RETURNS ----------
-    st.subheader("📊 Returns")
-
-    col5, col6 = st.columns(2)
-    col5.metric("IRR", f"{irr:.2%}")
-    col6.metric("MOIC", f"{moic:.2f}x")
-
-    # ---------- SUMMARY ----------
     st.subheader("📌 Summary")
+
     st.write(f"Revenue: {revenue:,.0f}")
-    st.write(f"Adj EBITDA: {adj_ebitda:,.0f}")
+    st.write(f"EBITDA: {ebitda:,.0f}")
     st.write(f"Margin: {margin:.2%}")
