@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # ---------------------------
-# 🔐 PASSWORD PROTECTION
+# 🔐 PASSWORD
 # ---------------------------
 def check_password():
     def password_entered():
@@ -28,14 +28,14 @@ if not check_password():
     st.stop()
 
 # ---------------------------
-# 🎯 PAGE CONFIG
+# PAGE CONFIG
 # ---------------------------
 st.set_page_config(page_title="SME Valuation Tool", layout="wide")
 
 st.title("📊 SME Valuation & Deal Analysis Tool")
 
 # ---------------------------
-# 🧾 SIDEBAR INPUTS
+# SIDEBAR INPUTS
 # ---------------------------
 st.sidebar.header("Deal Assumptions")
 
@@ -48,7 +48,7 @@ target_margin = st.sidebar.slider("Target EBITDA Margin (%)", 0, 50, 20)
 ebitda_adjustments = st.sidebar.number_input("EBITDA Adjustments", value=0.0)
 
 # ---------------------------
-# 📂 FILE UPLOAD
+# FILE UPLOAD
 # ---------------------------
 st.subheader("Upload Files")
 
@@ -56,109 +56,165 @@ pl_file = st.file_uploader("Upload P&L", type=["xlsx"])
 bs_file = st.file_uploader("Upload Balance Sheet", type=["xlsx"])
 
 # ---------------------------
-# 🧹 CLEANING FUNCTION
+# SMART INGESTION FUNCTIONS
 # ---------------------------
-def clean_data(df):
-    df.columns = [c.lower().strip() for c in df.columns]
+def read_file(file):
+    return pd.read_excel(file, header=None)
 
-    line_col, amount_col = None, None
 
+def detect_header(df_raw):
+    for i in range(min(10, len(df_raw))):
+        row = df_raw.iloc[i].astype(str).str.lower()
+        if any("amount" in cell or "value" in cell or "total" in cell for cell in row):
+            return i
+    return 0
+
+
+def process_df(file):
+    df_raw = read_file(file)
+    header_row = detect_header(df_raw)
+    df = pd.read_excel(file, header=header_row)
+    df.columns = [str(c).lower().strip() for c in df.columns]
+    return df
+
+
+def map_columns(df, title):
+    st.subheader(f"Map Columns: {title}")
+
+    cols = df.columns.tolist()
+
+    line_col = st.selectbox(f"{title} - Line Item Column", cols)
+    amount_col = st.selectbox(f"{title} - Amount Column", cols)
+
+    return line_col, amount_col
+
+
+def detect_year_columns(df):
+    year_cols = []
     for col in df.columns:
-        if "line" in col or "item" in col or "description" in col:
-            line_col = col
-        if "amount" in col or "value" in col:
-            amount_col = col
+        if any(str(y) in col for y in range(2000, 2035)):
+            year_cols.append(col)
+    return year_cols
 
-    if not line_col or not amount_col:
-        st.error("Could not detect columns. Need 'Line Item' and 'Amount'")
-        return None
 
+def clean_mapped(df, line_col, amount_col):
     df = df[[line_col, amount_col]]
     df.columns = ["Line Item", "Amount"]
 
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
-    df = df.dropna()
+    df = df.dropna(subset=["Amount"])
 
     return df
 
+
 # ---------------------------
-# 📊 PROCESS P&L
+# PROCESS P&L
 # ---------------------------
+pl_df = None
+revenue = cogs = opex = ebitda = margin = 0
+
 if pl_file:
-    pl_df = pd.read_excel(pl_file)
-    pl_df = clean_data(pl_df)
+    df = process_df(pl_file)
 
-    if pl_df is not None:
+    st.write("Preview P&L:")
+    st.dataframe(df.head())
 
-        st.subheader("Cleaned P&L")
-        st.dataframe(pl_df)
+    year_cols = detect_year_columns(df)
 
-        def classify(line):
-            line = line.lower()
+    if year_cols:
+        selected_year = st.selectbox("Select Year (P&L)", year_cols)
+        df["selected_amount"] = pd.to_numeric(df[selected_year], errors="coerce")
+        amount_col = "selected_amount"
+    else:
+        amount_col = st.selectbox("Select Amount Column", df.columns)
 
-            if "revenue" in line or "sales" in line:
-                return "Revenue"
-            elif "cogs" in line or "cost of goods" in line:
-                return "COGS"
-            else:
-                return "OpEx"
+    line_col = st.selectbox("Select Line Item Column", df.columns)
 
-        pl_df["Category"] = pl_df["Line Item"].apply(classify)
+    pl_df = clean_mapped(df, line_col, amount_col)
 
-        revenue = pl_df[pl_df["Category"] == "Revenue"]["Amount"].sum()
-        cogs = pl_df[pl_df["Category"] == "COGS"]["Amount"].sum()
-        opex = pl_df[pl_df["Category"] == "OpEx"]["Amount"].sum()
+    st.subheader("Cleaned P&L")
+    st.dataframe(pl_df)
 
-        ebitda = revenue - cogs - opex + ebitda_adjustments
-        margin = ebitda / revenue if revenue != 0 else 0
+    # Classification
+    def classify(line):
+        line = str(line).lower()
 
-        st.subheader("📌 P&L Breakdown")
-        st.write(f"Revenue: {revenue:,.0f}")
-        st.write(f"COGS: {cogs:,.0f}")
-        st.write(f"OpEx: {opex:,.0f}")
-        st.write(f"Adjusted EBITDA: {ebitda:,.0f}")
-        st.write(f"Margin: {margin:.2%}")
+        if "revenue" in line or "sales" in line:
+            return "Revenue"
+        elif "cogs" in line or "cost of goods" in line:
+            return "COGS"
+        else:
+            return "OpEx"
+
+    pl_df["Category"] = pl_df["Line Item"].apply(classify)
+
+    revenue = pl_df[pl_df["Category"] == "Revenue"]["Amount"].sum()
+    cogs = pl_df[pl_df["Category"] == "COGS"]["Amount"].sum()
+    opex = pl_df[pl_df["Category"] == "OpEx"]["Amount"].sum()
+
+    ebitda = revenue - cogs - opex + ebitda_adjustments
+    margin = ebitda / revenue if revenue != 0 else 0
+
+    st.subheader("📌 P&L Breakdown")
+    st.write(f"Revenue: {revenue:,.0f}")
+    st.write(f"COGS: {cogs:,.0f}")
+    st.write(f"OpEx: {opex:,.0f}")
+    st.write(f"EBITDA: {ebitda:,.0f}")
+    st.write(f"Margin: {margin:.2%}")
 
 # ---------------------------
-# 🏦 PROCESS BALANCE SHEET
+# PROCESS BALANCE SHEET
 # ---------------------------
 net_debt = 0
 
 if bs_file:
-    bs_df = pd.read_excel(bs_file)
-    bs_df = clean_data(bs_df)
+    df = process_df(bs_file)
 
-    if bs_df is not None:
+    st.write("Preview Balance Sheet:")
+    st.dataframe(df.head())
 
-        st.subheader("Balance Sheet")
-        st.dataframe(bs_df)
+    year_cols = detect_year_columns(df)
 
-        def classify_bs(line):
-            line = line.lower()
+    if year_cols:
+        selected_year = st.selectbox("Select Year (BS)", year_cols)
+        df["selected_amount"] = pd.to_numeric(df[selected_year], errors="coerce")
+        amount_col = "selected_amount"
+    else:
+        amount_col = st.selectbox("Select BS Amount Column", df.columns)
 
-            if "cash" in line:
-                return "Cash"
-            elif "debt" in line or "loan" in line:
-                return "Debt"
-            else:
-                return "Other"
+    line_col = st.selectbox("Select BS Line Item Column", df.columns)
 
-        bs_df["Category"] = bs_df["Line Item"].apply(classify_bs)
+    bs_df = clean_mapped(df, line_col, amount_col)
 
-        cash = bs_df[bs_df["Category"] == "Cash"]["Amount"].sum()
-        debt = bs_df[bs_df["Category"] == "Debt"]["Amount"].sum()
+    st.subheader("Cleaned Balance Sheet")
+    st.dataframe(bs_df)
 
-        net_debt = debt - cash
+    def classify_bs(line):
+        line = str(line).lower()
 
-        st.subheader("📌 Balance Sheet Breakdown")
-        st.write(f"Cash: {cash:,.0f}")
-        st.write(f"Debt: {debt:,.0f}")
-        st.write(f"Net Debt: {net_debt:,.0f}")
+        if "cash" in line:
+            return "Cash"
+        elif "debt" in line or "loan" in line:
+            return "Debt"
+        else:
+            return "Other"
+
+    bs_df["Category"] = bs_df["Line Item"].apply(classify_bs)
+
+    cash = bs_df[bs_df["Category"] == "Cash"]["Amount"].sum()
+    debt = bs_df[bs_df["Category"] == "Debt"]["Amount"].sum()
+
+    net_debt = debt - cash
+
+    st.subheader("📌 Balance Sheet Breakdown")
+    st.write(f"Cash: {cash:,.0f}")
+    st.write(f"Debt: {debt:,.0f}")
+    st.write(f"Net Debt: {net_debt:,.0f}")
 
 # ---------------------------
-# 📈 VALUATION + FORECAST
+# VALUATION ENGINE
 # ---------------------------
-if pl_file and pl_df is not None:
+if pl_df is not None:
 
     forecast_revenue = revenue * ((1 + growth_rate / 100) ** holding_period)
     forecast_ebitda = forecast_revenue * (target_margin / 100)
@@ -195,12 +251,10 @@ if pl_file and pl_df is not None:
         st.metric("MOIC", f"{moic:.2f}x")
 
     st.subheader("📌 Forecast")
-
-    st.write(f"Forecast Revenue: {forecast_revenue:,.0f}")
-    st.write(f"Forecast EBITDA: {forecast_ebitda:,.0f}")
+    st.write(f"Revenue: {forecast_revenue:,.0f}")
+    st.write(f"EBITDA: {forecast_ebitda:,.0f}")
 
     st.subheader("📌 Summary")
-
     st.write(f"Revenue: {revenue:,.0f}")
     st.write(f"EBITDA: {ebitda:,.0f}")
     st.write(f"Margin: {margin:.2%}")
