@@ -30,7 +30,7 @@ def check_password():
 check_password()
 
 # ============================
-# 🔐 SETTINGS
+# ⚙️ SETTINGS
 # ============================
 use_ai = st.sidebar.checkbox("🤖 Enable AI Classification", value=False)
 confidential_mode = st.sidebar.checkbox("🔐 Confidential Mode", value=True)
@@ -40,13 +40,26 @@ if "OPENAI_API_KEY" in st.secrets and use_ai and not confidential_mode:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # ============================
-# 🧼 SANITIZE
+# 🧼 HELPERS
 # ============================
 def sanitize(item):
     item = str(item)
     item = re.sub(r'\d+', '', item)
     item = re.sub(r'[^a-zA-Z\s]', '', item)
     return item.lower().strip()
+
+def make_unique(cols):
+    seen = {}
+    new_cols = []
+    for col in cols:
+        col = str(col)
+        if col in seen:
+            seen[col] += 1
+            new_cols.append(f"{col}_{seen[col]}")
+        else:
+            seen[col] = 0
+            new_cols.append(col)
+    return new_cols
 
 # ============================
 # 📊 DETECTION
@@ -60,14 +73,12 @@ def detect_header(df):
     return 0
 
 def detect_columns(df):
-
     scores = []
 
     for col in df.columns:
         try:
             col_data = df[col]
 
-            # 🔑 CRITICAL FIX: ensure Series
             if isinstance(col_data, pd.DataFrame):
                 col_data = col_data.iloc[:, 0]
 
@@ -98,14 +109,12 @@ def detect_columns(df):
     return line_col, amount_col
 
 def clean_dataframe(df_raw):
-
     header_row = detect_header(df_raw)
 
     df = df_raw.copy()
     df.columns = df.iloc[header_row]
     df = df[header_row + 1:].reset_index(drop=True)
 
-    # Clean column names
     df.columns = (
         pd.Series(df.columns)
         .fillna("")
@@ -113,29 +122,7 @@ def clean_dataframe(df_raw):
         .str.strip()
     )
 
-    # ✅ SAFE dedup (no ParserBase)
     df.columns = make_unique(df.columns)
-
-    return df, *detect_columns(df)
-
-def make_unique(cols):
-    seen = {}
-    new_cols = []
-
-    for col in cols:
-        col = str(col)
-
-        if col in seen:
-            seen[col] += 1
-            new_cols.append(f"{col}_{seen[col]}")
-        else:
-            seen[col] = 0
-            new_cols.append(col)
-
-    return new_cols
-
-    # 🔑 HANDLE DUPLICATES (VERY IMPORTANT)
-    df.columns = pd.io.parsers.ParserBase({'names':df.columns})._maybe_dedup_names(df.columns)
 
     return df, *detect_columns(df)
 
@@ -175,17 +162,6 @@ def rule_classify(item):
 
     return "Other"
 
-if revenue > 0:
-    margin = ebitda / revenue
-
-    if margin > 0.6:
-        st.warning("⚠️ EBITDA margin unusually high — check classification")
-
-if net_debt < 0:
-    col4.metric("Net Cash", f"{abs(net_debt):,.0f}")
-else:
-    col4.metric("Net Debt", f"{net_debt:,.0f}")
-    
 @st.cache_data
 def batch_ai(items):
     clean = [sanitize(i) for i in items]
@@ -211,7 +187,6 @@ def classify_df(df):
 
     if client:
         unknown = df[df["Category"]=="Other"]["Line Item"].unique().tolist()
-
         if unknown:
             ai_map = batch_ai(unknown)
             df["Category"] = df.apply(
@@ -223,7 +198,6 @@ def classify_df(df):
 # ============================
 # 🎯 UI
 # ============================
-
 st.title("📊 Investment Committee Model")
 st.caption("Automated financial normalization + valuation engine")
 
@@ -250,6 +224,8 @@ with col2:
 # ============================
 # PROCESS P&L
 # ============================
+revenue, ebitda = 0, 0
+
 if pl_file:
     df_raw = pd.read_excel(pl_file, header=None)
     df, lc, ac = clean_dataframe(df_raw)
@@ -262,39 +238,48 @@ if pl_file:
 
     ebitda = revenue - cogs - opex
 
+    # sanity check
+    if revenue > 0:
+        margin = ebitda / revenue
+        if margin > 0.6:
+            st.warning("⚠️ EBITDA margin unusually high — check classification")
+
 # ============================
 # PROCESS BS
 # ============================
 net_debt = 0
+
 if bs_file:
     df_raw = pd.read_excel(bs_file, header=None)
     df_bs, lc, ac = clean_dataframe(df_raw)
     df_bs = standardize(df_bs, lc, ac)
 
-    cash = df_bs[df_bs["Line Item"].str.contains("cash", case=False)]["Amount"].sum()
-    debt = df_bs[df_bs["Line Item"].str.contains("debt|loan", case=False)]["Amount"].sum()
+    cash = df_bs[df_bs["Line Item"].str.contains("cash|bank", case=False)]["Amount"].sum()
+    debt = df_bs[df_bs["Line Item"].str.contains("debt|loan|borrow", case=False)]["Amount"].sum()
 
     net_debt = debt - cash
 
 # ============================
-# 📊 INVESTMENT SNAPSHOT
+# 📊 SNAPSHOT
 # ============================
 if pl_file:
-
     st.header("📊 Investment Snapshot")
 
     col1, col2, col3, col4 = st.columns(4)
 
     col1.metric("Revenue", f"{revenue:,.0f}")
     col2.metric("EBITDA", f"{ebitda:,.0f}")
-    col3.metric("Margin", f"{(ebitda/revenue*100):.1f}%")
-    col4.metric("Net Debt", f"{net_debt:,.0f}")
+    col3.metric("Margin", f"{(ebitda/revenue*100 if revenue else 0):.1f}%")
+
+    if net_debt < 0:
+        col4.metric("Net Cash", f"{abs(net_debt):,.0f}")
+    else:
+        col4.metric("Net Debt", f"{net_debt:,.0f}")
 
 # ============================
 # 📈 FORECAST
 # ============================
 if pl_file:
-
     st.header("📈 Forecast")
 
     rev = revenue
@@ -314,7 +299,6 @@ if pl_file:
 # 💰 VALUATION
 # ============================
 if pl_file:
-
     st.header("💰 Valuation")
 
     entry_ev = ebitda * entry_multiple
@@ -332,7 +316,6 @@ if pl_file:
 # 📊 RETURNS
 # ============================
 if pl_file:
-
     st.header("📊 Returns")
 
     moic = exit_eq / entry_eq if entry_eq else 0
