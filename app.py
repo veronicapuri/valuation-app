@@ -243,11 +243,13 @@ def smart_pdf_extract(file):
             lines = text.split("\n")
 
             for line in lines:
-                match = re.search(r"[-]?\(?\d[\d,]*\)?", line)
+                match = re.search(r"[-]?\(?\d[\d,.\s]*\)?", line)
 
                 if match:
                     val = match.group(0)
-                    val = val.replace(",", "").replace("(", "-").replace(")", "")
+                    val = val.replace(",", "")
+                    val = val.replace(" ", "")
+                    val = val.replace("(", "-").replace(")", "")
 
                     label = line.replace(match.group(0), "").strip()
 
