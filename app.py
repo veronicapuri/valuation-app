@@ -279,21 +279,6 @@ def load_file(file):
 
     # PDF
     elif name.endswith(".pdf"):
-
-        df = smart_pdf_extract(file)
-
-        return df
-
-            def load_file(file):
-    name = file.name.lower()
-
-    if name.endswith(".xlsx"):
-        return pd.read_excel(file, header=None, engine="openpyxl")
-
-    elif name.endswith(".csv"):
-        return pd.read_csv(file, header=None)
-
-    elif name.endswith(".pdf"):
         return smart_pdf_extract(file)
 
     return None
