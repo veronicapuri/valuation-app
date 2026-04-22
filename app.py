@@ -15,11 +15,13 @@ def check_password():
     if not st.session_state.authenticated:
         st.markdown("## 🔐 Secure Access")
 
-        pwd = st.text_input("Enter Password", type="password")
+        pwd = st.text_input("Enter Password", type="password", key="password_input")
 
         if pwd == PASSWORD:
             st.session_state.authenticated = True
+            st.success("Access granted")
             st.rerun()
+
         elif pwd:
             st.error("Incorrect password")
 
