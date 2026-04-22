@@ -230,18 +230,37 @@ def smart_pdf_extract(file):
     import pandas as pd
     import re
 
-    all_results = []
+    results = []
+
     with pdfplumber.open(file) as pdf:
         for page in pdf.pages:
 
-            table = page.extract_table()
+            text = page.extract_text()
 
-            if table:
-                for row in table:
-                    all_results.append(row)
+            if not text:
+                continue
 
-    if all_results:
-        return pd.DataFrame(all_results)
+            lines = text.split("\n")
+
+            for line in lines:
+                match = re.search(r"[-]?\(?\d[\d,]*\)?", line)
+
+                if match:
+                    val = match.group(0)
+                    val = val.replace(",", "").replace("(", "-").replace(")", "")
+
+                    label = line.replace(match.group(0), "").strip()
+
+                    if len(label) < 2:
+                        continue
+
+                    try:
+                        results.append([label, float(val)])
+                    except:
+                        pass
+
+    if results:
+        return pd.DataFrame(results, columns=["Line Item", "Amount"])
 
     return None
 
@@ -262,6 +281,20 @@ def load_file(file):
         df = smart_pdf_extract(file)
 
         return df
+
+            def load_file(file):
+    name = file.name.lower()
+
+    if name.endswith(".xlsx"):
+        return pd.read_excel(file, header=None, engine="openpyxl")
+
+    elif name.endswith(".csv"):
+        return pd.read_csv(file, header=None)
+
+    elif name.endswith(".pdf"):
+        return smart_pdf_extract(file)
+
+    return None
 
         with pdfplumber.open(file) as pdf:
             for page in pdf.pages:
@@ -426,7 +459,7 @@ if pl_file:
 net_debt = 0
 
 if bs_file:
-    df_raw = load_file(pl_file)
+    df_raw = load_file(bs_file)
     df_bs, lc, ac = clean_dataframe(df_raw)
     df_bs = standardize(df_bs, lc, ac)
 
