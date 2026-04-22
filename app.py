@@ -254,20 +254,41 @@ def load_file(file):
 
         if text_data:
             lines = "\n".join(text_data).split("\n")
+
             parsed = []
+            buffer_label = None
 
             for line in lines:
-                parts = line.split()
+                line = line.strip()
 
-                if len(parts) >= 2:
+                if not line:
+                    continue
+
+                # Try to detect number in line
+                num = re.findall(r"[-\(\)\d,\.]+", line)
+
+                if num:
                     try:
-                        value = parts[-1].replace(",", "").replace("(", "-").replace(")", "")
+                        value = num[-1]
+                        value = value.replace(",", "").replace("(", "-").replace(")", "")
                         value = float(value)
 
-                        label = " ".join(parts[:-1])
-                        parsed.append([label, value])
+                        # Case 1: label + value in same line
+                        label = line.replace(num[-1], "").strip()
+
+                        if label:
+                            parsed.append([label, value])
+                            buffer_label = None
+                        elif buffer_label:
+                            # Case 2: label from previous line
+                            parsed.append([buffer_label, value])
+                            buffer_label = None
+
                     except:
                         continue
+                else:
+                    # Save label for next line
+                    buffer_label = line
 
             if parsed:
                 return pd.DataFrame(parsed)
