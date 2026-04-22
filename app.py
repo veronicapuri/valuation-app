@@ -206,7 +206,7 @@ st.sidebar.header("Deal Assumptions")
 
 entry_multiple = st.sidebar.number_input("Entry Multiple", 4.0)
 exit_multiple = st.sidebar.number_input("Exit Multiple", 6.5)
-holding_years = st.sidebar.slider("Holding Period", 1, 7, 5)
+holding_years = st.sidebar.slider("Holding Period", 1, 10, 5)
 
 growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)/100
 target_margin = st.sidebar.slider("EBITDA Margin (%)", 0, 80, 20)/100
