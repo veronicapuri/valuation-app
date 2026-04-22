@@ -105,13 +105,34 @@ def clean_dataframe(df_raw):
     df.columns = df.iloc[header_row]
     df = df[header_row + 1:].reset_index(drop=True)
 
-    # 🔑 FORCE CLEAN COLUMN NAMES
+    # Clean column names
     df.columns = (
         pd.Series(df.columns)
         .fillna("")
         .astype(str)
         .str.strip()
     )
+
+    # ✅ SAFE dedup (no ParserBase)
+    df.columns = make_unique(df.columns)
+
+    return df, *detect_columns(df)
+
+def make_unique(cols):
+    seen = {}
+    new_cols = []
+
+    for col in cols:
+        col = str(col)
+
+        if col in seen:
+            seen[col] += 1
+            new_cols.append(f"{col}_{seen[col]}")
+        else:
+            seen[col] = 0
+            new_cols.append(col)
+
+    return new_cols
 
     # 🔑 HANDLE DUPLICATES (VERY IMPORTANT)
     df.columns = pd.io.parsers.ParserBase({'names':df.columns})._maybe_dedup_names(df.columns)
