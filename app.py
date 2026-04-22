@@ -60,15 +60,37 @@ def detect_header(df):
     return 0
 
 def detect_columns(df):
+
     scores = []
+
     for col in df.columns:
-        col_data = df[col].astype(str)
+        try:
+            col_data = df[col]
 
-        numeric = pd.to_numeric(col_data.str.replace(",", ""), errors="coerce")
-        numeric_score = numeric.notna().sum()
-        text_score = col_data.str.len().mean()
+            # 🔑 CRITICAL FIX: ensure Series
+            if isinstance(col_data, pd.DataFrame):
+                col_data = col_data.iloc[:, 0]
 
-        scores.append((col, numeric_score, text_score))
+            col_data = col_data.fillna("").astype(str)
+
+            numeric = pd.to_numeric(
+                col_data.str.replace(",", "")
+                        .str.replace("(", "-")
+                        .str.replace(")", ""),
+                errors="coerce"
+            )
+
+            numeric_score = numeric.notna().sum()
+            text_score = col_data.str.len().mean()
+
+            scores.append((col, numeric_score, text_score))
+
+        except:
+            continue
+
+    if len(scores) < 2:
+        st.error("Could not detect columns")
+        st.stop()
 
     amount_col = max(scores, key=lambda x: x[1])[0]
     line_col = max([x for x in scores if x[0] != amount_col], key=lambda x: x[2])[0]
@@ -76,13 +98,23 @@ def detect_columns(df):
     return line_col, amount_col
 
 def clean_dataframe(df_raw):
+
     header_row = detect_header(df_raw)
 
     df = df_raw.copy()
     df.columns = df.iloc[header_row]
     df = df[header_row + 1:].reset_index(drop=True)
 
-    df.columns = pd.Series(df.columns).astype(str).str.strip()
+    # 🔑 FORCE CLEAN COLUMN NAMES
+    df.columns = (
+        pd.Series(df.columns)
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    # 🔑 HANDLE DUPLICATES (VERY IMPORTANT)
+    df.columns = pd.io.parsers.ParserBase({'names':df.columns})._maybe_dedup_names(df.columns)
 
     return df, *detect_columns(df)
 
