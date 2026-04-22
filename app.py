@@ -234,23 +234,52 @@ def load_file(file):
 
     # PDF
     if name.endswith(".pdf"):
-        import pdfplumber
+    import pdfplumber
 
-        tables = []
+    text_data = []
+    table_data = []
 
-        with pdfplumber.open(file) as pdf:
-            for page in pdf.pages:
-                table = page.extract_table()
-                if table:
-                    tables.extend(table)
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            # Try table first
+            table = page.extract_table()
+            if table:
+                table_data.extend(table)
 
-        if not tables:
-            st.error("❌ No table found in PDF")
-            st.stop()
+            # Always extract text as fallback
+            text = page.extract_text()
+            if text:
+                text_data.append(text)
 
-        return pd.DataFrame(tables)
+    # ✅ CASE 1: Table found
+    if table_data:
+        return pd.DataFrame(table_data)
 
-    st.error("Unsupported file type")
+    # ✅ CASE 2: FALLBACK → parse text
+    if text_data:
+        lines = "\n".join(text_data).split("\n")
+
+        parsed = []
+
+        for line in lines:
+            parts = line.split()
+
+            if len(parts) >= 2:
+                # try to split into label + number
+                try:
+                    value = parts[-1].replace(",", "").replace("(", "-").replace(")", "")
+                    value = float(value)
+
+                    label = " ".join(parts[:-1])
+                    parsed.append([label, value])
+
+                except:
+                    continue
+
+        if parsed:
+            return pd.DataFrame(parsed)
+
+    st.error("❌ Could not extract usable data from PDF")
     st.stop()
     
 # ============================
