@@ -234,7 +234,7 @@ def load_file(file):
 
     # PDF
     elif name.endswith(".pdf"):
-        import pdfplumber   # ✅ MUST be indented
+        import pdfplumber
 
         text_data = []
         table_data = []
@@ -249,9 +249,15 @@ def load_file(file):
                 if text:
                     text_data.append(text)
 
+        # =========================
+        # 1. Try table extraction
+        # =========================
         if table_data:
             return pd.DataFrame(table_data)
 
+        # =========================
+        # 2. Try text parsing
+        # =========================
         if text_data:
             lines = "\n".join(text_data).split("\n")
 
@@ -264,7 +270,6 @@ def load_file(file):
                 if not line:
                     continue
 
-                # Try to detect number in line
                 num = re.findall(r"[-\(\)\d,\.]+", line)
 
                 if num:
@@ -273,33 +278,70 @@ def load_file(file):
                         value = value.replace(",", "").replace("(", "-").replace(")", "")
                         value = float(value)
 
-                        # Case 1: label + value in same line
                         label = line.replace(num[-1], "").strip()
 
                         if label:
                             parsed.append([label, value])
                             buffer_label = None
                         elif buffer_label:
-                            # Case 2: label from previous line
                             parsed.append([buffer_label, value])
                             buffer_label = None
 
                     except:
                         continue
                 else:
-                    # Save label for next line
                     buffer_label = line
 
             if parsed:
                 return pd.DataFrame(parsed)
 
+        # =========================
+        # 3. OCR fallback (NEW)
+        # =========================
+        try:
+            import fitz  # PyMuPDF
+            import pytesseract
+            from PIL import Image
+
+            file.seek(0)
+            doc = fitz.open(stream=file.read(), filetype="pdf")
+
+            ocr_text = []
+
+            for page in doc:
+                pix = page.get_pixmap()
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                text = pytesseract.image_to_string(img)
+                ocr_text.append(text)
+
+            if ocr_text:
+                lines = "\n".join(ocr_text).split("\n")
+
+                parsed = []
+                for line in lines:
+                    parts = line.split()
+
+                    if len(parts) >= 2:
+                        try:
+                            value = parts[-1].replace(",", "").replace("(", "-").replace(")", "")
+                            value = float(value)
+                            label = " ".join(parts[:-1])
+                            parsed.append([label, value])
+                        except:
+                            continue
+
+                if parsed:
+                    return pd.DataFrame(parsed)
+
+        except:
+            pass
+
+        # =========================
+        # FAIL SAFE
+        # =========================
         st.error("❌ Could not extract usable data from PDF")
         st.stop()
-
-    else:
-        st.error("Unsupported file type")
-        st.stop()
-    
+        
 # ============================
 # PROCESS P&L
 # ============================
