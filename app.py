@@ -161,15 +161,31 @@ def standardize(df, line_col, amount_col):
 def rule_classify(item):
     item = str(item).lower()
 
-    if any(x in item for x in ["revenue","sales","income"]):
+    if any(x in item for x in ["revenue","sales","income","fees"]):
         return "Revenue"
-    if any(x in item for x in ["cost","cogs","direct"]):
+
+    if any(x in item for x in ["cost","cogs","direct","materials","subcontract"]):
         return "COGS"
-    if any(x in item for x in ["salary","rent","expense","admin","marketing"]):
+
+    if any(x in item for x in [
+        "salary","wage","rent","expense","admin","marketing",
+        "utilities","insurance","travel","professional"
+    ]):
         return "OpEx"
 
     return "Other"
 
+if revenue > 0:
+    margin = ebitda / revenue
+
+    if margin > 0.6:
+        st.warning("⚠️ EBITDA margin unusually high — check classification")
+
+if net_debt < 0:
+    col4.metric("Net Cash", f"{abs(net_debt):,.0f}")
+else:
+    col4.metric("Net Debt", f"{net_debt:,.0f}")
+    
 @st.cache_data
 def batch_ai(items):
     clean = [sanitize(i) for i in items]
