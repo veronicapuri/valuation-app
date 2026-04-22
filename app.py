@@ -283,42 +283,42 @@ def load_file(file):
 
     return None
 
-        with pdfplumber.open(file) as pdf:
+    with pdfplumber.open(file) as pdf:
             for page in pdf.pages:
 
-                # ===== 1. TABLE EXTRACTION =====
-                try:
-                    tables = page.extract_tables()
+            # ===== 1. TABLE EXTRACTION =====
+            try:
+                tables = page.extract_tables()
                     for table in tables:
-                        df = pd.DataFrame(table)
+                    df = pd.DataFrame(table)
 
-                        if df.shape[1] >= 2:
-                            df = df.fillna("")
+                    if df.shape[1] >= 2:
+                        df = df.fillna("")
 
-                            col_scores = []
-                            for col in df.columns:
-                                numeric = pd.to_numeric(
-                                    df[col].astype(str).str.replace(",", ""),
-                                    errors="coerce"
-                                )
-                                col_scores.append((col, numeric.notna().sum()))
+                        col_scores = []
+                        for col in df.columns:
+                            numeric = pd.to_numeric(
+                                df[col].astype(str).str.replace(",", ""),
+                                errors="coerce"
+                            )
+                            col_scores.append((col, numeric.notna().sum()))
 
-                            if col_scores:
-                                amount_col = max(col_scores, key=lambda x: x[1])[0]
-                                line_col = [c for c in df.columns if c != amount_col][0]
+                        if col_scores:
+                            amount_col = max(col_scores, key=lambda x: x[1])[0]
+                            line_col = [c for c in df.columns if c != amount_col][0]
 
-                                clean = df[[line_col, amount_col]].copy()
-                                clean.columns = ["Line Item", "Amount"]
+                            clean = df[[line_col, amount_col]].copy()
+                            clean.columns = ["Line Item", "Amount"]
 
-                                clean["Amount"] = pd.to_numeric(
-                                    clean["Amount"].astype(str).str.replace(",", ""),
-                                    errors="coerce"
-                                ).fillna(0)
+                            clean["Amount"] = pd.to_numeric(
+                                clean["Amount"].astype(str).str.replace(",", ""),
+                                errors="coerce"
+                            ).fillna(0)
 
-                                if clean["Amount"].abs().sum() > 0:
-                                    all_results.append(clean)
-                except:
-                    pass
+                            if clean["Amount"].abs().sum() > 0:
+                                all_results.append(clean)
+            except:
+                pass
 
                 # ===== 2. LAYOUT PARSING =====
                 try:
