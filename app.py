@@ -241,21 +241,17 @@ def load_file(file):
 
     with pdfplumber.open(file) as pdf:
         for page in pdf.pages:
-            # Try table first
             table = page.extract_table()
             if table:
                 table_data.extend(table)
 
-            # Always extract text as fallback
             text = page.extract_text()
             if text:
                 text_data.append(text)
 
-    # ✅ CASE 1: Table found
     if table_data:
         return pd.DataFrame(table_data)
 
-    # ✅ CASE 2: FALLBACK → parse text
     if text_data:
         lines = "\n".join(text_data).split("\n")
 
@@ -265,14 +261,12 @@ def load_file(file):
             parts = line.split()
 
             if len(parts) >= 2:
-                # try to split into label + number
                 try:
                     value = parts[-1].replace(",", "").replace("(", "-").replace(")", "")
                     value = float(value)
 
                     label = " ".join(parts[:-1])
                     parsed.append([label, value])
-
                 except:
                     continue
 
