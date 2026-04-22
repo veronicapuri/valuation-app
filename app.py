@@ -30,23 +30,23 @@ uploaded_file = st.file_uploader("Upload P&L (Excel)", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
-    # --- Auto-detect columns ---
-    df.columns = [col.lower() for col in df.columns]
+# --- Auto-detect columns ---
+df.columns = [col.lower() for col in df.columns]
 
-    line_col = None
-    amount_col = None
+line_col = None
+amount_col = None
 
-    for col in df.columns:
-        if "item" in col or "description" in col:
+for col in df.columns:
+    if "item" in col or "description" in col:
         line_col = col
-        if "amount" in col or "value" in col or "total" in col:
+    if "amount" in col or "value" in col or "total" in col:
         amount_col = col
 
-    if line_col is None or amount_col is None:
+if line_col is None or amount_col is None:
     st.error("Could not detect columns. Please ensure your file has description and amount columns.")
     st.stop()
 
-    df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
+df = df.rename(columns={line_col: "Line Item", amount_col: "Amount"})
 
     def classify(line):
         line = str(line).lower()
