@@ -162,73 +162,16 @@ def rule_classify(item):
 
     return "Other"
 
-@st.cache_data
-def batch_ai(items):
-    clean = [sanitize(i) for i in items]
-
-    prompt = f"""
-    Classify each into: Revenue, COGS, OpEx, Other.
-    Return JSON mapping.
-
-    {clean}
-    """
-
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role":"user","content":prompt}],
-        temperature=0
-    )
-
-    import json
-    return json.loads(res.choices[0].message.content)
-
 def classify_df(df):
     df["Category"] = df["Line Item"].apply(rule_classify)
-
-    if client:
-        unknown = df[df["Category"]=="Other"]["Line Item"].unique().tolist()
-        if unknown:
-            ai_map = batch_ai(unknown)
-            df["Category"] = df.apply(
-                lambda x: ai_map.get(x["Line Item"], x["Category"]), axis=1
-            )
-
     return df
 
 # ============================
-# 🎯 UI
-# ============================
-st.title("📊 Investment Committee Model")
-st.caption("Automated financial normalization + valuation engine")
-
-# Sidebar
-st.sidebar.header("Deal Assumptions")
-
-entry_multiple = st.sidebar.number_input("Entry Multiple", 4.0)
-exit_multiple = st.sidebar.number_input("Exit Multiple", 6.5)
-holding_years = st.sidebar.slider("Holding Period", 1, 10, 5)
-
-growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)/100
-target_margin = st.sidebar.slider("EBITDA Margin (%)", 0, 80, 20)/100
-
-# Upload
-st.header("📂 Data Ingestion")
-col1, col2 = st.columns(2)
-
-with col1:
-    pl_file = st.file_uploader("Upload P&L", type=["xlsx", "csv", "pdf"])
-
-with col2:
-    bs_file = st.file_uploader("Upload Balance Sheet", type=["xlsx", "csv", "pdf"])
-
-# ============================
-# 🧠 PDF ENGINE FIRST
+# 📄 PDF PARSER (CLEAN)
 # ============================
 def smart_pdf_extract(file):
 
     import pdfplumber
-    import pandas as pd
-    import re
 
     results = []
 
@@ -266,155 +209,51 @@ def smart_pdf_extract(file):
 
     return None
 
+# ============================
+# 📂 FILE LOADER
+# ============================
 def load_file(file):
     name = file.name.lower()
 
-    # Excel
     if name.endswith(".xlsx"):
         return pd.read_excel(file, header=None, engine="openpyxl")
 
-    # CSV
     elif name.endswith(".csv"):
         return pd.read_csv(file, header=None)
 
-    # PDF
     elif name.endswith(".pdf"):
         return smart_pdf_extract(file)
 
     return None
 
-    with pdfplumber.open(file) as pdf:
-            for page in pdf.pages:
+# ============================
+# 🎯 UI
+# ============================
+st.title("📊 Investment Committee Model")
+st.caption("Automated financial normalization + valuation engine")
 
-            # ===== 1. TABLE EXTRACTION =====
-            try:
-                tables = page.extract_tables()
-                    for table in tables:
-                    df = pd.DataFrame(table)
+st.sidebar.header("Deal Assumptions")
 
-                    if df.shape[1] >= 2:
-                        df = df.fillna("")
+entry_multiple = st.sidebar.number_input("Entry Multiple", 4.0)
+exit_multiple = st.sidebar.number_input("Exit Multiple", 6.5)
+holding_years = st.sidebar.slider("Holding Period", 1, 10, 5)
 
-                        col_scores = []
-                        for col in df.columns:
-                            numeric = pd.to_numeric(
-                                df[col].astype(str).str.replace(",", ""),
-                                errors="coerce"
-                            )
-                            col_scores.append((col, numeric.notna().sum()))
+growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)/100
+target_margin = st.sidebar.slider("EBITDA Margin (%)", 0, 80, 20)/100
 
-                        if col_scores:
-                            amount_col = max(col_scores, key=lambda x: x[1])[0]
-                            line_col = [c for c in df.columns if c != amount_col][0]
+st.header("📂 Data Ingestion")
 
-                            clean = df[[line_col, amount_col]].copy()
-                            clean.columns = ["Line Item", "Amount"]
+col1, col2 = st.columns(2)
 
-                            clean["Amount"] = pd.to_numeric(
-                                clean["Amount"].astype(str).str.replace(",", ""),
-                                errors="coerce"
-                            ).fillna(0)
+with col1:
+    pl_file = st.file_uploader("Upload P&L", type=["xlsx","csv","pdf"])
 
-                            if clean["Amount"].abs().sum() > 0:
-                                all_results.append(clean)
-            except:
-                pass
+with col2:
+    bs_file = st.file_uploader("Upload Balance Sheet", type=["xlsx","csv","pdf"])
 
-                # ===== 2. LAYOUT PARSING =====
-                try:
-                    words = page.extract_words(use_text_flow=True)
-    
-                    if words:
-                        mid_x = page.width * 0.6
-
-                        rows = {}
-                        for w in words:
-                            y = round(w["top"], 0)
-
-                            if y not in rows:
-                                rows[y] = {"left": [], "right": []}
-
-                            if float(w["x0"]) < mid_x:
-                                rows[y]["left"].append(w["text"])
-                            else:
-                                rows[y]["right"].append(w["text"])
-
-                        parsed = []
-                        for r in rows.values():
-                            left = " ".join(r["left"]).strip()
-                            right = " ".join(r["right"]).strip()
-
-                            if not left:
-                                continue
-
-                            nums = re.findall(r"[-]?\(?\d[\d,]*\)?", right)
-
-                            if nums:
-                                val = nums[0]
-                                val = val.replace(",", "").replace("(", "-").replace(")", "")
-
-                                try:
-                                    parsed.append([left, float(val)])
-                                except:
-                                    pass
-
-                        if parsed:
-                            df = pd.DataFrame(parsed, columns=["Line Item", "Amount"])
-                            all_results.append(df)
-                except:
-                    pass
-
-                # ===== 3. TEXT PARSING =====
-                try:
-                    text = page.extract_text()
-
-                    if text:
-                        lines = text.split("\n")
-                        parsed = []
-
-                        for line in lines:
-                            match = re.search(r"[-]?\(?\d[\d,]*\)?", line)
-
-                            if match:
-                                val = match.group(0)
-                                val = val.replace(",", "").replace("(", "-").replace(")", "")
-    
-                                label = line.replace(match.group(0), "").strip()
-    
-                                try:
-                                    parsed.append([label, float(val)])
-                                except:
-                                    pass
-    
-                        if parsed:
-                            df = pd.DataFrame(parsed, columns=["Line Item", "Amount"])
-                            all_results.append(df)
-                except:
-                    pass
-
-        if not all_results:
-            return None
-    
-        # pick best result
-        best = max(all_results, key=lambda x: x["Amount"].abs().sum())
-
-        return best
-
-        # =========================
-        # FAIL SAFE
-        # =========================
-        if pl_file:
-            df_raw = load_file(pl_file)
-
-            if df_raw is None:
-                st.error("❌ Could not extract usable data from file")
-                st.stop()
-
-            df, lc, ac = clean_dataframe(df_raw)
-            df = standardize(df, lc, ac)
-            df = classify_df(df)
-
+# ============================
 # PROCESS P&L
+# ============================
 revenue, ebitda = 0, 0
 
 if pl_file:
@@ -434,12 +273,6 @@ if pl_file:
 
     ebitda = revenue - cogs - opex
 
-    # sanity check
-    if revenue > 0:
-        margin = ebitda / revenue
-        if margin > 0.6:
-            st.warning("⚠️ EBITDA margin unusually high — check classification")
-
 # ============================
 # PROCESS BS
 # ============================
@@ -447,16 +280,18 @@ net_debt = 0
 
 if bs_file:
     df_raw = load_file(bs_file)
-    df_bs, lc, ac = clean_dataframe(df_raw)
-    df_bs = standardize(df_bs, lc, ac)
 
-    cash = df_bs[df_bs["Line Item"].str.contains("cash|bank", case=False)]["Amount"].sum()
-    debt = df_bs[df_bs["Line Item"].str.contains("debt|loan|borrow", case=False)]["Amount"].sum()
+    if df_raw is not None:
+        df_bs, lc, ac = clean_dataframe(df_raw)
+        df_bs = standardize(df_bs, lc, ac)
 
-    net_debt = debt - cash
+        cash = df_bs[df_bs["Line Item"].str.contains("cash|bank", case=False)]["Amount"].sum()
+        debt = df_bs[df_bs["Line Item"].str.contains("debt|loan|borrow", case=False)]["Amount"].sum()
+
+        net_debt = debt - cash
 
 # ============================
-# 📊 SNAPSHOT
+# SNAPSHOT
 # ============================
 if pl_file:
     st.header("📊 Investment Snapshot")
@@ -473,7 +308,7 @@ if pl_file:
         col4.metric("Net Debt", f"{net_debt:,.0f}")
 
 # ============================
-# 📈 FORECAST
+# FORECAST
 # ============================
 if pl_file:
     st.header("📈 Forecast")
@@ -492,7 +327,7 @@ if pl_file:
     exit_ebitda = f.iloc[-1]["EBITDA"]
 
 # ============================
-# 💰 VALUATION
+# VALUATION
 # ============================
 if pl_file:
     st.header("💰 Valuation")
@@ -509,7 +344,7 @@ if pl_file:
     col2.metric("Exit Equity", f"{exit_eq:,.0f}")
 
 # ============================
-# 📊 RETURNS
+# RETURNS
 # ============================
 if pl_file:
     st.header("📊 Returns")
