@@ -90,6 +90,7 @@ def detect_header(df):
 
     return best_row
 
+
 raw.columns = (
     raw.columns
     .astype(str)
