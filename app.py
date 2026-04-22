@@ -231,7 +231,7 @@ def smart_pdf_extract(file):
     import re
 
     all_results = []
-     with pdfplumber.open(file) as pdf:
+    with pdfplumber.open(file) as pdf:
         for page in pdf.pages:
 
             table = page.extract_table()
