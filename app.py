@@ -221,6 +221,30 @@ with col1:
 with col2:
     bs_file = st.file_uploader("Upload Balance Sheet", type=["xlsx", "csv", "pdf"])
 
+# ============================
+# 🧠 PDF ENGINE FIRST
+# ============================
+def smart_pdf_extract(file):
+
+    import pdfplumber
+    import pandas as pd
+    import re
+
+    all_results = []
+     with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+
+            table = page.extract_table()
+
+            if table:
+                for row in table:
+                    all_results.append(row)
+
+    if all_results:
+        return pd.DataFrame(all_results)
+
+    return None
+
 def load_file(file):
     name = file.name.lower()
 
@@ -238,13 +262,6 @@ def load_file(file):
         df = smart_pdf_extract(file)
 
         return df
-    def smart_pdf_extract(file):
-
-        import pdfplumber
-        import pandas as pd
-        import re
-
-        all_results = []
 
         with pdfplumber.open(file) as pdf:
             for page in pdf.pages:
