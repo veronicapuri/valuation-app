@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# ---------------------------
+# =============================
 # 🔐 PASSWORD (SECURE VERSION)
-# ---------------------------
+# =============================
 def check_password():
     def password_entered():
         if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
@@ -28,14 +28,15 @@ def check_password():
 if not check_password():
     st.stop()
 
+# =============================
+# ⚙️ PAGE CONFIG
+# =============================
 st.set_page_config(layout="wide")
+st.title("📊 SME Valuation & LBO Tool")
 
 # =============================
-# 🧠 HELPER FUNCTIONS
+# 🧠 HELPERS
 # =============================
-def safe_str(x):
-    return str(x).lower() if pd.notnull(x) else ""
-
 def detect_columns(df):
     line_col = None
     amt_col = None
@@ -56,11 +57,12 @@ def clean_df(df, line_col, amt_col):
     df = df[[line_col, amt_col]].copy()
     df.columns = ["Line Item", "Amount"]
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+    df = df[df["Line Item"].notna()]  # remove blanks
     return df
 
 
 def classify(item):
-    item = item.lower()
+    item = str(item).lower()  # 🔥 FIXED
 
     if any(x in item for x in ["revenue", "sales", "income"]):
         return "Revenue"
@@ -70,11 +72,6 @@ def classify(item):
         return "OpEx"
     return "Other"
 
-
-# =============================
-# 🎯 TITLE
-# =============================
-st.title("📊 SME Valuation & LBO Tool")
 
 # =============================
 # 📂 FILE UPLOAD
@@ -100,8 +97,9 @@ growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)
 target_margin = st.sidebar.slider("EBITDA Margin (%)", 0, 50, 20)
 adjustments = st.sidebar.number_input("EBITDA Adjustments", value=0.0)
 
-# LBO
+# LBO assumptions
 st.sidebar.header("LBO Assumptions")
+
 debt_percent = st.sidebar.slider("Debt %", 0, 80, 50)
 interest_rate = st.sidebar.slider("Interest (%)", 0, 15, 8)
 tax_rate = st.sidebar.slider("Tax (%)", 0, 40, 25)
@@ -122,10 +120,10 @@ if pl_file:
     line_col, amt_col = detect_columns(df_raw)
 
     if line_col is None or amt_col is None:
-        st.warning("Select columns manually")
+        st.warning("Auto-detect failed. Select columns manually")
 
-        line_col = st.selectbox("Select Line Item Column", df_raw.columns)
-        amt_col = st.selectbox("Select Amount Column", df_raw.columns)
+        line_col = st.selectbox("Line Item Column", df_raw.columns)
+        amt_col = st.selectbox("Amount Column", df_raw.columns)
 
     df = clean_df(df_raw, line_col, amt_col)
     df["Category"] = df["Line Item"].apply(classify)
@@ -158,8 +156,8 @@ if pl_file:
 
         if line_col is None or amt_col is None:
             st.warning("Select BS columns manually")
-            line_col = st.selectbox("BS Line", bs_raw.columns)
-            amt_col = st.selectbox("BS Amount", bs_raw.columns)
+            line_col = st.selectbox("BS Line Column", bs_raw.columns)
+            amt_col = st.selectbox("BS Amount Column", bs_raw.columns)
 
         bs = clean_df(bs_raw, line_col, amt_col)
 
@@ -167,7 +165,7 @@ if pl_file:
         st.dataframe(bs)
 
         for _, row in bs.iterrows():
-            name = row["Line Item"].lower()
+            name = str(row["Line Item"]).lower()
 
             if "cash" in name:
                 cash += row["Amount"]
@@ -234,7 +232,7 @@ if pl_file:
             "Year": year,
             "Revenue": current_rev,
             "EBITDA": ebitda_y,
-            "Debt": current_debt,
+            "Debt Remaining": current_debt,
             "Cash Flow": cashflow
         })
 
