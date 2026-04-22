@@ -216,18 +216,50 @@ st.header("📂 Data Ingestion")
 col1, col2 = st.columns(2)
 
 with col1:
-    pl_file = st.file_uploader("Upload P&L")
+    pl_file = st.file_uploader("Upload P&L", type=["xlsx", "csv", "pdf"])
 
 with col2:
-    bs_file = st.file_uploader("Upload Balance Sheet")
+    bs_file = st.file_uploader("Upload Balance Sheet", type=["xlsx", "csv", "pdf"])
 
+def load_file(file):
+    name = file.name.lower()
+
+    # Excel
+    if name.endswith(".xlsx"):
+        return pd.read_excel(file, header=None, engine="openpyxl")
+
+    # CSV
+    if name.endswith(".csv"):
+        return pd.read_csv(file, header=None)
+
+    # PDF
+    if name.endswith(".pdf"):
+        import pdfplumber
+
+        tables = []
+
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                table = page.extract_table()
+                if table:
+                    tables.extend(table)
+
+        if not tables:
+            st.error("❌ No table found in PDF")
+            st.stop()
+
+        return pd.DataFrame(tables)
+
+    st.error("Unsupported file type")
+    st.stop()
+    
 # ============================
 # PROCESS P&L
 # ============================
 revenue, ebitda = 0, 0
 
 if pl_file:
-    df_raw = pd.read_excel(pl_file, header=None)
+    df_raw = load_file(pl_file)
     df, lc, ac = clean_dataframe(df_raw)
     df = standardize(df, lc, ac)
     df = classify_df(df)
@@ -250,7 +282,7 @@ if pl_file:
 net_debt = 0
 
 if bs_file:
-    df_raw = pd.read_excel(bs_file, header=None)
+    df_raw = load_file(pl_file)
     df_bs, lc, ac = clean_dataframe(df_raw)
     df_bs = standardize(df_bs, lc, ac)
 
