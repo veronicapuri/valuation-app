@@ -91,18 +91,56 @@ def load_file(file):
     return None
 
 # ============================
-# CLASSIFICATION
+# STRUCTURE-AWARE CLASSIFICATION (DALOOPA STYLE)
 # ============================
+
+def detect_sections(df):
+    sections = []
+    current = "Unknown"
+
+    for item in df["Line Item"]:
+        text = str(item).lower()
+
+        if "revenue" in text or "income" in text:
+            current = "Revenue Section"
+        elif "cost of sales" in text or "cogs" in text:
+            current = "COGS Section"
+        elif "operating expense" in text or "expenses" in text:
+            current = "OpEx Section"
+        elif "other income" in text:
+            current = "Other Income Section"
+        elif "profit" in text:
+            current = "Summary"
+
+        sections.append(current)
+
+    df["Section"] = sections
+    return df
+
 
 def smart_classify(df):
     df = df.copy()
 
-    def rule(item):
-        item = str(item).lower()
+    def rule(row):
+        item = str(row["Line Item"]).lower()
+        section = row.get("Section", "Unknown")
 
-        if any(x in item for x in ["grant", "fx", "gain", "interest income"]):
+        # -------- SECTION LOGIC (PRIMARY DRIVER) --------
+        if section == "Revenue Section":
+            return "Revenue"
+
+        if section == "COGS Section":
+            return "COGS"
+
+        if section == "OpEx Section":
+            if "depreciation" in item:
+                return "D&A"
+            return "OpEx"
+
+        if section == "Other Income Section":
             return "Other Income"
 
+        # -------- FALLBACK LOGIC --------
         if any(x in item for x in ["revenue", "sales"]):
             return "Revenue"
 
@@ -112,19 +150,85 @@ def smart_classify(df):
         if any(x in item for x in [
             "salary","wage","rent","expense","admin","marketing",
             "utilities","insurance","travel","professional",
-            "depreciation","tax","levy","subscription","fee","bank"
+            "subscription","fee","bank"
         ]):
             return "OpEx"
 
+        if any(x in item for x in ["depreciation", "amortization"]):
+            return "D&A"
+
+        if any(x in item for x in ["grant", "fx", "gain", "interest income"]):
+            return "Other Income"
+
+        if any(x in item for x in ["tax", "interest expense"]):
+            return "Below EBITDA"
+
         return "Other"
 
-    df["Category"] = df["Line Item"].apply(rule)
+    df["Category"] = df.apply(rule, axis=1)
     return df
+
+
+# ============================
+# TOTALS DETECTION
+# ============================
+
+def detect_totals(df):
+    totals = {}
+
+    for _, row in df.iterrows():
+        item = str(row["Line Item"]).lower()
+        amt = row["Amount"]
+
+        if "total revenue" in item or "total income" in item:
+            totals["Revenue"] = amt
+
+        if "gross profit" in item:
+            totals["Gross Profit"] = amt
+
+        if "net profit" in item:
+            totals["Net Profit"] = amt
+
+    return totals
+
+
+# ============================
+# RECONCILIATION CHECK
+# ============================
+
+def reconcile(df, totals):
+    if "Revenue" in totals:
+        calc_revenue = df[df.Category == "Revenue"]["Amount"].sum()
+        diff = abs(calc_revenue - totals["Revenue"])
+
+        if totals["Revenue"] != 0 and diff > 0.05 * abs(totals["Revenue"]):
+            st.error("🚨 Revenue mismatch — classification likely wrong")
+
+
+# ============================
+# CONFIDENCE SCORE (UPGRADED)
+# ============================
 
 def classification_confidence(df):
     total = df["Amount"].abs().sum()
-    mapped = df[df["Category"] != "Other"]["Amount"].abs().sum()
-    return mapped / total if total else 0
+    mapped = df[~df["Category"].isin(["Other"])]["Amount"].abs().sum()
+
+    structure_bonus = 0.1 if "Section" in df.columns else 0
+
+    return min(1.0, (mapped / total) + structure_bonus)
+
+
+# ============================
+# AUTO FIX (SELF HEALING)
+# ============================
+
+def auto_fix(df, totals):
+    if "Revenue" in totals:
+        df.loc[
+            df["Line Item"].str.contains("sales|revenue", case=False, na=False),
+            "Category"
+        ] = "Revenue"
+    return df
 
 # ============================
 # UI
@@ -174,7 +278,11 @@ if pl_file:
     df_raw = load_file(pl_file)
     df, lc, ac = clean_dataframe(df_raw)
     df = standardize(df, lc, ac)
+    df = detect_sections(df)
     df = smart_classify(df)
+    totals = detect_totals(df)
+    df = auto_fix(df, totals)
+    reconcile(df, totals)
 
     confidence = classification_confidence(df)
     if confidence < 0.7:
