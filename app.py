@@ -321,8 +321,22 @@ if pl_file:
         ebit = rev * target_margin
         rows.append([y, rev, ebit])
 
-    f = pd.DataFrame(rows, columns=["Year","Revenue","EBITDA"])
-    st.dataframe(f)
+    f = pd.DataFrame(rows, columns=["Year", "Revenue", "EBITDA"])
+
+    # Add margin BEFORE display
+    f["Margin %"] = (f["EBITDA"] / f["Revenue"]) * 100
+
+    # Optional: nicer year labels
+    f["Year"] = f["Year"].apply(lambda x: f"Y{x}")
+    f = f.set_index("Year")
+
+    st.dataframe(
+        f.style.format({
+            "Revenue": "{:,.0f}",
+            "EBITDA": "{:,.0f}",
+            "Margin %": "{:.1f}%"
+        })
+    )
 
     exit_ebitda = f.iloc[-1]["EBITDA"]
 
