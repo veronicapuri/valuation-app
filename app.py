@@ -32,7 +32,6 @@ def detect_header(df):
 
 def detect_columns(df):
     scores = []
-
     for col in df.columns:
         col_data = df[col].fillna("").astype(str)
 
@@ -80,23 +79,34 @@ def standardize(df, line_col, amount_col):
 
     return df
 
+def load_file(file):
+    name = file.name.lower()
+
+    if name.endswith(".xlsx"):
+        return pd.read_excel(file, header=None)
+
+    elif name.endswith(".csv"):
+        return pd.read_csv(file, header=None)
+
+    return None
+
 # ============================
-# CLASSIFICATION (FIXED)
+# CLASSIFICATION
 # ============================
 
 def smart_classify(df):
     df = df.copy()
 
     def rule(item):
-        item = str(item).lower()   # 🔥 critical fix
+        item = str(item).lower()
 
         if any(x in item for x in ["grant", "fx", "gain", "interest income"]):
             return "Other Income"
 
-        if any(x in item for x in ["revenue", "sales", "turnover"]):
+        if any(x in item for x in ["revenue", "sales"]):
             return "Revenue"
 
-        if any(x in item for x in ["cost of sales", "cogs", "materials"]):
+        if any(x in item for x in ["cost of sales", "cogs"]):
             return "COGS"
 
         if any(x in item for x in [
@@ -115,21 +125,6 @@ def classification_confidence(df):
     total = df["Amount"].abs().sum()
     mapped = df[df["Category"] != "Other"]["Amount"].abs().sum()
     return mapped / total if total else 0
-
-# ============================
-# FILE LOADER
-# ============================
-
-def load_file(file):
-    name = file.name.lower()
-
-    if name.endswith(".xlsx"):
-        return pd.read_excel(file, header=None)
-
-    elif name.endswith(".csv"):
-        return pd.read_csv(file, header=None)
-
-    return None
 
 # ============================
 # UI
@@ -153,7 +148,7 @@ interest_rate = st.sidebar.slider("Interest Rate (%)", 0, 20, 8) / 100
 tax_rate = st.sidebar.slider("Tax Rate (%)", 0, 40, 25) / 100
 capex_pct = st.sidebar.slider("Capex (% Revenue)", 0, 20, 5) / 100
 
-# EBITDA margins
+# Margins
 st.sidebar.header("EBITDA Margin by Year")
 margins = [
     st.sidebar.slider(f"Y{i+1}", 0, 80, 20) / 100
@@ -162,7 +157,14 @@ margins = [
 
 # Upload
 st.header("📂 Data Ingestion")
-pl_file = st.file_uploader("Upload P&L", type=["xlsx", "csv"])
+
+col1, col2 = st.columns(2)
+
+with col1:
+    pl_file = st.file_uploader("Upload P&L", type=["xlsx", "csv"])
+
+with col2:
+    bs_file = st.file_uploader("Upload Balance Sheet", type=["xlsx", "csv"])
 
 # ============================
 # PROCESS P&L
@@ -170,13 +172,11 @@ pl_file = st.file_uploader("Upload P&L", type=["xlsx", "csv"])
 
 if pl_file:
     df_raw = load_file(pl_file)
-
     df, lc, ac = clean_dataframe(df_raw)
     df = standardize(df, lc, ac)
     df = smart_classify(df)
 
     confidence = classification_confidence(df)
-
     if confidence < 0.7:
         st.warning("⚠️ Low classification confidence")
 
@@ -194,15 +194,42 @@ if pl_file:
     ebitda = revenue - cogs - opex + other_income
 
     # ============================
+    # PROCESS BS
+    # ============================
+
+    net_debt = 0
+    cash = 0
+    debt = 0
+
+    if bs_file:
+        df_raw_bs = load_file(bs_file)
+        df_bs, lc_bs, ac_bs = clean_dataframe(df_raw_bs)
+        df_bs = standardize(df_bs, lc_bs, ac_bs)
+
+        df_bs["Line Item"] = df_bs["Line Item"].astype(str)
+
+        cash = df_bs[df_bs["Line Item"].str.contains("cash|bank", case=False, na=False)]["Amount"].sum()
+
+        debt = df_bs[df_bs["Line Item"].str.contains("loan|debt|borrow", case=False, na=False)]["Amount"].sum()
+
+        net_debt = debt - cash
+
+    # ============================
     # SNAPSHOT
     # ============================
 
     st.header("📊 Snapshot")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
+
     col1.metric("Revenue", f"{revenue:,.0f}")
     col2.metric("EBITDA", f"{ebitda:,.0f}")
     col3.metric("Margin", f"{(ebitda/revenue*100 if revenue else 0):.1f}%")
+
+    if net_debt < 0:
+        col4.metric("Net Cash", f"{abs(net_debt):,.0f}")
+    else:
+        col4.metric("Net Debt", f"{net_debt:,.0f}")
 
     # ============================
     # FORECAST
@@ -219,6 +246,7 @@ if pl_file:
         rows.append([f"Y{y+1}", rev, ebit, margins[y]*100])
 
     f = pd.DataFrame(rows, columns=["Year","Revenue","EBITDA","Margin %"])
+
     st.dataframe(f.style.format({
         "Revenue": "{:,.0f}",
         "EBITDA": "{:,.0f}",
@@ -228,7 +256,7 @@ if pl_file:
     exit_ebitda = f.iloc[-1]["EBITDA"]
 
     # ============================
-    # LBO MODEL
+    # LBO
     # ============================
 
     st.header("🏦 LBO Analysis")
@@ -237,7 +265,7 @@ if pl_file:
     entry_debt = entry_ev * debt_pct
     entry_equity = entry_ev - entry_debt
 
-    debt = entry_debt
+    debt_balance = entry_debt
     cash_flows = [-entry_equity]
 
     lbo_rows = []
@@ -245,37 +273,38 @@ if pl_file:
     for i in range(holding_years):
         ebitda_y = f.iloc[i]["EBITDA"]
 
-        interest = debt * interest_rate
+        interest = debt_balance * interest_rate
         tax = max(0, (ebitda_y - interest) * tax_rate)
         capex = f.iloc[i]["Revenue"] * capex_pct
 
         fcf = ebitda_y - interest - tax - capex
 
-        debt_repay = max(0, min(fcf, debt))
-        debt -= debt_repay
+        repayment = max(0, min(fcf, debt_balance))
+        debt_balance -= repayment
 
         lbo_rows.append([
             f"Y{i+1}",
             f.iloc[i]["Revenue"],
             ebitda_y,
             fcf,
-            debt
+            debt_balance
         ])
 
         if i < holding_years - 1:
             cash_flows.append(0)
 
     exit_ev = exit_ebitda * exit_multiple
-    exit_equity = exit_ev - debt
-
+    exit_equity = exit_ev - debt_balance
     cash_flows.append(exit_equity)
 
-    # IRR (manual, no numpy_financial)
-    try:
-        irr = np.irr(cash_flows)
-    except:
-        irr = 0
+    # IRR fallback
+    def compute_irr(cf):
+        try:
+            return np.irr(cf)
+        except:
+            return 0
 
+    irr = compute_irr(cash_flows)
     moic = exit_equity / entry_equity if entry_equity else 0
 
     lbo_df = pd.DataFrame(
