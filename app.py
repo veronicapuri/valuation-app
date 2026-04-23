@@ -239,13 +239,14 @@ exit_multiple = st.sidebar.number_input("Exit Multiple", 6.5)
 holding_years = st.sidebar.slider("Holding Period", 1, 10, 5)
 
 growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)/100
-st.sidebar.subheader("EBITDA Margin by Year")
 st.sidebar.subheader("LBO Assumptions")
 
 debt_pct = st.sidebar.slider("Debt % at Entry", 0, 90, 60) / 100
 interest_rate = st.sidebar.slider("Interest Rate (%)", 0, 15, 8) / 100
 tax_rate = st.sidebar.slider("Tax Rate (%)", 0, 40, 25) / 100
 capex_pct = st.sidebar.slider("Capex (% of Revenue)", 0, 20, 5) / 100
+
+st.sidebar.subheader("EBITDA Margin by Year")
 
 st.header("📂 Data Ingestion")
 
