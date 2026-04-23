@@ -230,7 +230,7 @@ def load_file(file):
 # ============================
 # 🎯 UI
 # ============================
-st.title("📊 Investment Committee Model")
+st.title("📊 SME Valuation & LBO Tool")
 st.caption("Automated financial normalization + valuation engine")
 
 st.sidebar.header("Deal Assumptions")
