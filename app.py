@@ -239,7 +239,7 @@ exit_multiple = st.sidebar.number_input("Exit Multiple", 6.5)
 holding_years = st.sidebar.slider("Holding Period", 1, 10, 5)
 
 growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)/100
-target_margin = st.sidebar.slider("EBITDA Margin (%)", 0, 80, 20)/100
+st.sidebar.subheader("EBITDA Margin by Year")
 
 st.header("📂 Data Ingestion")
 
