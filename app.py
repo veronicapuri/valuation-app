@@ -101,29 +101,89 @@ def standardize(df, line_col, amount_col):
 # ============================
 # 🧠 CLASSIFICATION
 # ============================
-def rule_classify(item):
-    item = str(item).lower()
+def smart_classify(df):
 
-    if any(x in item for x in ["revenue","sales","income","fees"]):
-        return "Revenue"
+    df = df.copy()
+    df["Category"] = "Other"
 
-    if any(x in item for x in ["cost","cogs","materials","direct"]):
-        return "COGS"
+    lines = df["Line Item"].astype(str).str.lower()
 
-    if any(x in item for x in [
-        "salary","wage","rent","expense","admin","marketing",
-        "utilities","insurance","travel","professional",
-        "depreciation","tax","levy","subscription","fee","bank",
-        "cpf","bonus"
-    ]):
-        return "OpEx"
+    # =========================
+    # 1. DETECT STRUCTURE
+    # =========================
+    anchors = {
+        "revenue": lines[lines.str.contains("revenue|income|turnover")],
+        "gross_profit": lines[lines.str.contains("gross profit")],
+        "cogs": lines[lines.str.contains("cost of sales|cogs")],
+        "opex": lines[lines.str.contains("operating expenses|expenses")]
+    }
 
-    return "Other"
+    has_structure = len(anchors["gross_profit"]) > 0
 
-def classify_df(df):
-    df["Category"] = df["Line Item"].apply(rule_classify)
+    # =========================
+    # 2. STRUCTURE-BASED CLASSIFICATION
+    # =========================
+    if has_structure:
+
+        gp_idx = anchors["gross_profit"].index.min()
+
+        # try to detect opex start
+        opex_idx = anchors["opex"].index.min() if len(anchors["opex"]) else None
+
+        for i in df.index:
+
+            if i <= gp_idx:
+                df.loc[i, "Category"] = "Revenue"
+
+            elif opex_idx and gp_idx < i <= opex_idx:
+                df.loc[i, "Category"] = "COGS"
+
+            elif opex_idx and i > opex_idx:
+                df.loc[i, "Category"] = "OpEx"
+
+        return df
+
+    # =========================
+    # 3. HEURISTIC FALLBACK
+    # =========================
+    def rule(item):
+        item = item.lower()
+
+        if any(x in item for x in ["sales","turnover"]):
+            return "Revenue"
+
+        if any(x in item for x in ["cost","cogs","materials"]):
+            return "COGS"
+
+        if any(x in item for x in [
+            "salary","wage","rent","expense","admin","marketing",
+            "utilities","insurance","travel","professional",
+            "depreciation","tax","levy","subscription","fee","bank"
+        ]):
+            return "OpEx"
+
+        if any(x in item for x in ["grant","fx","gain","interest income"]):
+            return "Other Income"
+
+        return "Other"
+
+    df["Category"] = df["Line Item"].apply(rule)
+
     return df
 
+def classification_confidence(df):
+
+    total = df["Amount"].abs().sum()
+    mapped = df[df["Category"] != "Other"]["Amount"].abs().sum()
+
+    return mapped / total if total else 0
+
+confidence = classification_confidence(df)
+
+if confidence < 0.7:
+    st.warning("⚠️ Low classification confidence — check mapping")
+with st.expander("🔍 Debug View"):
+    st.dataframe(df)
 # ============================
 # 📄 PDF PARSER
 # ============================
@@ -220,8 +280,9 @@ if pl_file:
     revenue = df[df.Category=="Revenue"]["Amount"].sum()
     cogs = df[df.Category=="COGS"]["Amount"].sum()
     opex = df[df.Category=="OpEx"]["Amount"].sum()
+    other_income = df[df.Category=="Other Income"]["Amount"].sum()
 
-    ebitda = revenue - cogs - opex
+    ebitda = revenue - cogs - opex + other_income
 
 # ============================
 # PROCESS BS
