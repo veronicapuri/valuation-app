@@ -316,17 +316,23 @@ if pl_file:
     rev = revenue
     rows = []
 
-    for y in range(1, holding_years+1):
-        rev *= (1+growth_rate)
-        ebit = rev * target_margin
-        rows.append([y, rev, ebit])
+    # 👇 NEW: margin ramp controls
+    start_margin = st.sidebar.slider("Start Margin (%)", 0, 50, 15) / 100
+    exit_margin = st.sidebar.slider("Exit Margin (%)", 0, 50, 25) / 100
 
-    f = pd.DataFrame(rows, columns=["Year", "Revenue", "EBITDA"])
+    margins = np.linspace(start_margin, exit_margin, holding_years)
 
-    # Add margin BEFORE display
-    f["Margin %"] = (f["EBITDA"] / f["Revenue"]) * 100
+    for y in range(1, holding_years + 1):
+        rev *= (1 + growth_rate)
 
-    # Optional: nicer year labels
+        margin = margins[y - 1]   # 👈 key change
+        ebit = rev * margin
+
+        rows.append([y, rev, ebit, margin * 100])
+
+    f = pd.DataFrame(rows, columns=["Year", "Revenue", "EBITDA", "Margin %"])
+
+    # nicer formatting
     f["Year"] = f["Year"].apply(lambda x: f"Y{x}")
     f = f.set_index("Year")
 
