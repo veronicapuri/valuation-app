@@ -46,8 +46,7 @@ def make_unique(cols):
 def detect_header(df):
     for i in range(min(15, len(df))):
         row = df.iloc[i].fillna("").astype(str).str.lower()
-        text = " ".join(row.values)
-        if "amount" in text or "value" in text:
+        if "amount" in " ".join(row.values):
             return i
     return 0
 
@@ -77,7 +76,6 @@ def clean_dataframe(df_raw):
     df = df_raw.copy()
     df.columns = df.iloc[header]
     df = df[header + 1:].reset_index(drop=True)
-
     df.columns = make_unique(df.columns)
 
     return df, *detect_columns(df)
@@ -102,59 +100,25 @@ def standardize(df, line_col, amount_col):
 # 🧠 CLASSIFICATION
 # ============================
 def smart_classify(df):
-
     df = df.copy()
-    df["Category"] = "Other"
-
     lines = df["Line Item"].astype(str).str.lower()
 
-    # =========================
-    # 1. DETECT STRUCTURE
-    # =========================
-    anchors = {
-        "revenue": lines[lines.str.contains("revenue|income|turnover")],
-        "gross_profit": lines[lines.str.contains("gross profit")],
-        "cogs": lines[lines.str.contains("cost of sales|cogs")],
-        "opex": lines[lines.str.contains("operating expenses|expenses")]
-    }
-
-    has_structure = len(anchors["gross_profit"]) > 0
-
-    # =========================
-    # 2. STRUCTURE-BASED CLASSIFICATION
-    # =========================
-    if has_structure:
-
-        gp_idx = anchors["gross_profit"].index.min()
-
-        # try to detect opex start
-        opex_idx = anchors["opex"].index.min() if len(anchors["opex"]) else None
-
-        for i in df.index:
-
-            if i <= gp_idx:
-                df.loc[i, "Category"] = "Revenue"
-
-            elif opex_idx and gp_idx < i <= opex_idx:
-                df.loc[i, "Category"] = "COGS"
-
-            elif opex_idx and i > opex_idx:
-                df.loc[i, "Category"] = "OpEx"
-
-        return df
-
-    # =========================
-    # 3. HEURISTIC FALLBACK
-    # =========================
     def rule(item):
         item = item.lower()
 
-        if any(x in item for x in ["sales","turnover"]):
+        # 1️⃣ OTHER INCOME FIRST (IMPORTANT)
+        if any(x in item for x in ["grant", "fx", "gain", "interest income"]):
+            return "Other Income"
+
+        # 2️⃣ REVENUE
+        if any(x in item for x in ["revenue", "sales", "turnover"]):
             return "Revenue"
 
-        if any(x in item for x in ["cost","cogs","materials"]):
+        # 3️⃣ COGS
+        if any(x in item for x in ["cost of sales", "cogs", "materials"]):
             return "COGS"
 
+        # 4️⃣ OPEX LAST
         if any(x in item for x in [
             "salary","wage","rent","expense","admin","marketing",
             "utilities","insurance","travel","professional",
@@ -162,22 +126,15 @@ def smart_classify(df):
         ]):
             return "OpEx"
 
-        if any(x in item for x in ["grant","fx","gain","interest income"]):
-            return "Other Income"
-
         return "Other"
 
     df["Category"] = df["Line Item"].apply(rule)
-
     return df
 
-    
-    def classification_confidence(df):
-
-        total = df["Amount"].abs().sum()
-        mapped = df[df["Category"] != "Other"]["Amount"].abs().sum()
-
-        return mapped / total if total else 0
+def classification_confidence(df):
+    total = df["Amount"].abs().sum()
+    mapped = df[df["Category"] != "Other"]["Amount"].abs().sum()
+    return mapped / total if total else 0
 
 # ============================
 # 📄 PDF PARSER
@@ -230,7 +187,7 @@ def load_file(file):
     return None
 
 # ============================
-# 🎯 UI
+# UI
 # ============================
 st.title("📊 SME Valuation & LBO Tool")
 
@@ -248,9 +205,7 @@ interest_rate = st.sidebar.slider("Interest Rate (%)", 0, 15, 8)/100
 tax_rate = st.sidebar.slider("Tax Rate (%)", 0, 40, 25)/100
 capex_pct = st.sidebar.slider("Capex (% Revenue)", 0, 20, 5)/100
 
-# ============================
-# FILE INPUT
-# ============================
+# FILES
 col1, col2 = st.columns(2)
 
 with col1:
@@ -265,14 +220,19 @@ with col2:
 if pl_file:
     df_raw = load_file(pl_file)
 
+    if df_raw is None:
+        st.error("❌ Could not extract data")
+        st.stop()
+
     df, lc, ac = clean_dataframe(df_raw)
     df = standardize(df, lc, ac)
-    df = classify_df(df)
+    df = smart_classify(df)
 
     confidence = classification_confidence(df)
 
     if confidence < 0.7:
-        st.warning("⚠️ Low classification confidence — check mapping")
+        st.warning("⚠️ Low classification confidence")
+
     with st.expander("🔍 Debug View"):
         st.dataframe(df)
 
@@ -299,10 +259,7 @@ if bs_file:
         df_bs = standardize(df_bs, lc, ac)
 
         cash = df_bs[df_bs["Line Item"].str.contains("cash|bank", case=False)]["Amount"].sum()
-
-        debt = df_bs[df_bs["Line Item"].str.contains(
-            "loan|borrow|debt|payable|liability|owing", case=False
-        )]["Amount"].sum()
+        debt = df_bs[df_bs["Line Item"].str.contains("loan|borrow|debt|payable|liability", case=False)]["Amount"].sum()
 
         net_debt = debt - cash
 
@@ -322,101 +279,3 @@ if pl_file:
         col4.metric("Net Cash", f"{abs(net_debt):,.0f}")
     else:
         col4.metric("Net Debt", f"{net_debt:,.0f}")
-
-# ============================
-# FORECAST
-# ============================
-if pl_file:
-    st.header("📈 Forecast")
-
-    margins = []
-    for y in range(1, holding_years+1):
-        m = st.sidebar.slider(f"Margin Y{y}", 0, 80, 20, key=f"m{y}")
-        margins.append(m/100)
-
-    rev = revenue
-    rows = []
-
-    for y in range(1, holding_years+1):
-        rev *= (1 + growth_rate)
-        ebit = rev * margins[y-1]
-        rows.append([f"Y{y}", rev, ebit, margins[y-1]*100])
-
-    f = pd.DataFrame(rows, columns=["Year","Revenue","EBITDA","Margin %"]).set_index("Year")
-
-    st.dataframe(f.style.format({
-        "Revenue": "{:,.0f}",
-        "EBITDA": "{:,.0f}",
-        "Margin %": "{:.1f}%"
-    }))
-
-# ============================
-# LBO MODEL
-# ============================
-if pl_file:
-
-    st.header("🏦 LBO")
-
-    entry_ev = ebitda * entry_multiple
-
-    entry_debt = net_debt if net_debt > 0 else entry_ev * debt_pct
-    entry_equity = entry_ev - entry_debt
-
-    debt = entry_debt
-    cash_flows = [-entry_equity]
-
-    lbo_rows = []
-
-    for i, row in f.iterrows():
-
-        rev_y = row["Revenue"]
-        ebitda_y = row["EBITDA"]
-
-        capex = rev_y * capex_pct
-        interest = debt * interest_rate
-        depreciation = ebitda_y * 0.05
-
-        ebit = ebitda_y - depreciation
-        tax = max(0, ebit * tax_rate)
-
-        fcf = ebitda_y - capex - interest - tax
-
-        repayment = min(debt * 0.4, max(0, fcf))
-        debt -= repayment
-
-        cash_flows.append(fcf)
-
-        lbo_rows.append([i, rev_y, ebitda_y, fcf, debt])
-
-    exit_ebitda = f.iloc[-1]["EBITDA"]
-    exit_ev = exit_ebitda * exit_multiple
-    exit_equity = exit_ev - debt
-
-    cash_flows[-1] += exit_equity
-
-    try:
-        irr = npf.irr(cash_flows)
-    except:
-        irr = 0
-
-    moic = exit_equity / entry_equity
-
-    lbo_df = pd.DataFrame(
-        lbo_rows,
-        columns=["Year","Revenue","EBITDA","FCF","Debt"]
-    ).set_index("Year")
-
-    st.dataframe(lbo_df.style.format("{:,.0f}"))
-
-    col1, col2 = st.columns(2)
-    col1.metric("MOIC", f"{moic:.2f}x")
-    col2.metric("IRR", f"{irr*100:.2f}%")
-
-# ============================
-# VALUATION
-# ============================
-    st.header("💰 Valuation")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Entry EV", f"{entry_ev:,.0f}")
-    col2.metric("Exit EV", f"{exit_ev:,.0f}")
