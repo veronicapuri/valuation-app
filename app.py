@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
+import numpy_financial as npf
 
 # Optional AI
 from openai import OpenAI
@@ -273,6 +274,12 @@ if pl_file:
     df, lc, ac = clean_dataframe(df_raw)
     df = standardize(df, lc, ac)
     df = classify_df(df)
+    df = classify_df(df)
+
+    # 🔍 DEBUG: see how items are classified
+    st.subheader("🔍 Classification Breakdown")
+    st.dataframe(df.groupby("Category")["Amount"].sum())
+    st.dataframe(df.sort_values("Amount", key=abs, ascending=False).head(20))
 
     revenue = df[df.Category=="Revenue"]["Amount"].sum()
     cogs = df[df.Category=="COGS"]["Amount"].sum()
@@ -410,9 +417,9 @@ if pl_file:
 
     # IRR
     try:
-        irr = np.irr(cash_flows)
+        irr = npf.irr(cash_flows)
     except:
-        irr = 0
+        irr = None
 
     moic = exit_equity / entry_equity if entry_equity else 0
 
@@ -437,7 +444,11 @@ if pl_file:
     # Metrics
     col1, col2 = st.columns(2)
     col1.metric("MOIC", f"{moic:.2f}x")
-    col2.metric("IRR", f"{irr*100:.2f}%")
+    if irr is not None:
+        col2.metric("IRR", f"{irr*100:.2f}%")
+    else:
+        col2.metric("IRR", "N/A")
+        
 # ============================
 # VALUATION
 # ============================
