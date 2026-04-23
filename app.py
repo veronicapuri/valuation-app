@@ -171,19 +171,14 @@ def smart_classify(df):
 
     return df
 
-def classification_confidence(df):
+    
+    def classification_confidence(df):
 
-    total = df["Amount"].abs().sum()
-    mapped = df[df["Category"] != "Other"]["Amount"].abs().sum()
+        total = df["Amount"].abs().sum()
+        mapped = df[df["Category"] != "Other"]["Amount"].abs().sum()
 
-    return mapped / total if total else 0
+        return mapped / total if total else 0
 
-confidence = classification_confidence(df)
-
-if confidence < 0.7:
-    st.warning("⚠️ Low classification confidence — check mapping")
-with st.expander("🔍 Debug View"):
-    st.dataframe(df)
 # ============================
 # 📄 PDF PARSER
 # ============================
@@ -273,6 +268,13 @@ if pl_file:
     df, lc, ac = clean_dataframe(df_raw)
     df = standardize(df, lc, ac)
     df = classify_df(df)
+
+    confidence = classification_confidence(df)
+
+    if confidence < 0.7:
+        st.warning("⚠️ Low classification confidence — check mapping")
+    with st.expander("🔍 Debug View"):
+        st.dataframe(df)
 
     st.subheader("🔍 Classification Breakdown")
     st.dataframe(df.groupby("Category")["Amount"].sum())
