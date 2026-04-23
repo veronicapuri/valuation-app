@@ -4,4 +4,4 @@ numpy
 openai
 pdfplumber
 pdfminer.six
-numpy_financial
+numpy-financial
