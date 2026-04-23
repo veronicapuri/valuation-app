@@ -301,6 +301,9 @@ if bs_file:
 
         cash = df_bs[df_bs["Line Item"].str.contains("cash|bank", case=False)]["Amount"].sum()
         debt = df_bs[df_bs["Line Item"].str.contains("debt|loan|borrow", case=False)]["Amount"].sum()
+        debt = df_bs[df_bs["Line Item"].str.contains(
+            "debt|loan|borrow|payable|liability", case=False
+        )]["Amount"].sum()
 
         net_debt = debt - cash
 
@@ -358,7 +361,7 @@ if pl_file:
     )
 
     exit_ebitda = f.iloc[-1]["EBITDA"]
-
+    
 # ============================
 # 🏦 LBO MODEL
 # ============================
@@ -366,14 +369,15 @@ if pl_file:
 
     st.header("🏦 LBO Analysis")
 
-    # Entry
+    # --- ENTRY ---
     entry_ev = ebitda * entry_multiple
-    if bs_file:
-        entry_debt = max(0, net_debt)   # use actual net debt
-        entry_equity = entry_ev - entry_debt
+
+    if bs_file and net_debt != 0:
+        entry_debt = max(0, net_debt)
     else:
         entry_debt = entry_ev * debt_pct
-        entry_equity = entry_ev - entry_debt
+
+    entry_equity = entry_ev - entry_debt
 
     debt = entry_debt
     cash_flows = [-entry_equity]
@@ -382,40 +386,41 @@ if pl_file:
 
     for i, row in f.iterrows():
 
-        revenue = row["Revenue"]
+        rev_y = row["Revenue"]
         ebitda_y = row["EBITDA"]
 
-        # Simple assumptions
-        capex = revenue * capex_pct
+        # --- ASSUMPTIONS ---
+        capex = rev_y * capex_pct
         interest = debt * interest_rate
 
         ebt = ebitda_y - interest
         tax = max(0, ebt * tax_rate)
 
-        # Cash available for debt paydown
+        # --- FCF ---
         fcf = ebitda_y - capex - interest - tax
 
-        debt_paydown = max(0, fcf)
-        debt = max(0, debt - debt_paydown)
+        # --- CONTROLLED DEBT PAYDOWN ---
+        repayment = min(debt * 0.3, max(0, fcf))   # cap repayment at 30%
+        debt -= repayment
 
         cash_flows.append(fcf)
 
         lbo_rows.append([
             i,
-            revenue,
+            rev_y,
             ebitda_y,
             fcf,
             debt
         ])
 
-    # Exit
+    # --- EXIT ---
     exit_ebitda = f.iloc[-1]["EBITDA"]
     exit_ev = exit_ebitda * exit_multiple
     exit_equity = exit_ev - debt
 
-    cash_flows[-1] += exit_equity  # add exit proceeds
+    cash_flows[-1] += exit_equity
 
-    # IRR
+    # --- IRR ---
     try:
         irr = npf.irr(cash_flows)
     except:
@@ -423,7 +428,7 @@ if pl_file:
 
     moic = exit_equity / entry_equity if entry_equity else 0
 
-    # Display LBO table
+    # --- DISPLAY ---
     lbo_df = pd.DataFrame(
         lbo_rows,
         columns=["Year", "Revenue", "EBITDA", "FCF", "Remaining Debt"]
@@ -441,14 +446,14 @@ if pl_file:
         })
     )
 
-    # Metrics
     col1, col2 = st.columns(2)
     col1.metric("MOIC", f"{moic:.2f}x")
+
     if irr is not None:
         col2.metric("IRR", f"{irr*100:.2f}%")
     else:
         col2.metric("IRR", "N/A")
-        
+
 # ============================
 # VALUATION
 # ============================
