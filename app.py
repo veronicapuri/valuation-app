@@ -240,6 +240,12 @@ holding_years = st.sidebar.slider("Holding Period", 1, 10, 5)
 
 growth_rate = st.sidebar.slider("Revenue Growth (%)", 0, 50, 10)/100
 st.sidebar.subheader("EBITDA Margin by Year")
+st.sidebar.subheader("LBO Assumptions")
+
+debt_pct = st.sidebar.slider("Debt % at Entry", 0, 90, 60) / 100
+interest_rate = st.sidebar.slider("Interest Rate (%)", 0, 15, 8) / 100
+tax_rate = st.sidebar.slider("Tax Rate (%)", 0, 40, 25) / 100
+capex_pct = st.sidebar.slider("Capex (% of Revenue)", 0, 20, 5) / 100
 
 st.header("📂 Data Ingestion")
 
@@ -346,31 +352,97 @@ if pl_file:
     exit_ebitda = f.iloc[-1]["EBITDA"]
 
 # ============================
-# VALUATION
+# 🏦 LBO MODEL
 # ============================
 if pl_file:
-    st.header("💰 Valuation")
 
+    st.header("🏦 LBO Analysis")
+
+    # Entry
     entry_ev = ebitda * entry_multiple
+    if bs_file:
+        entry_debt = max(0, net_debt)   # use actual net debt
+        entry_equity = entry_ev - entry_debt
+    else:
+        entry_debt = entry_ev * debt_pct
+        entry_equity = entry_ev - entry_debt
+
+    debt = entry_debt
+    cash_flows = [-entry_equity]
+
+    lbo_rows = []
+
+    for i, row in f.iterrows():
+
+        revenue = row["Revenue"]
+        ebitda_y = row["EBITDA"]
+
+        # Simple assumptions
+        capex = revenue * capex_pct
+        interest = debt * interest_rate
+
+        ebt = ebitda_y - interest
+        tax = max(0, ebt * tax_rate)
+
+        # Cash available for debt paydown
+        fcf = ebitda_y - capex - interest - tax
+
+        debt_paydown = max(0, fcf)
+        debt = max(0, debt - debt_paydown)
+
+        cash_flows.append(fcf)
+
+        lbo_rows.append([
+            i,
+            revenue,
+            ebitda_y,
+            fcf,
+            debt
+        ])
+
+    # Exit
+    exit_ebitda = f.iloc[-1]["EBITDA"]
     exit_ev = exit_ebitda * exit_multiple
+    exit_equity = exit_ev - debt
 
-    entry_eq = entry_ev - net_debt
-    exit_eq = exit_ev - net_debt
+    cash_flows[-1] += exit_equity  # add exit proceeds
 
-    col1, col2 = st.columns(2)
+    # IRR
+    try:
+        irr = np.irr(cash_flows)
+    except:
+        irr = 0
 
-    col1.metric("Entry Equity", f"{entry_eq:,.0f}")
-    col2.metric("Exit Equity", f"{exit_eq:,.0f}")
+    moic = exit_equity / entry_equity if entry_equity else 0
 
-# ============================
-# RETURNS
-# ============================
-if pl_file:
-    st.header("📊 Returns")
+    # Display LBO table
+    lbo_df = pd.DataFrame(
+        lbo_rows,
+        columns=["Year", "Revenue", "EBITDA", "FCF", "Remaining Debt"]
+    )
 
-    moic = exit_eq / entry_eq if entry_eq else 0
-    irr = moic**(1/holding_years)-1 if holding_years else 0
+    lbo_df["Year"] = lbo_df["Year"].apply(lambda x: f"Y{x}")
+    lbo_df = lbo_df.set_index("Year")
 
+    st.dataframe(
+        lbo_df.style.format({
+            "Revenue": "{:,.0f}",
+            "EBITDA": "{:,.0f}",
+            "FCF": "{:,.0f}",
+            "Remaining Debt": "{:,.0f}",
+        })
+    )
+
+    # Metrics
     col1, col2 = st.columns(2)
     col1.metric("MOIC", f"{moic:.2f}x")
     col2.metric("IRR", f"{irr*100:.2f}%")
+# ============================
+# VALUATION
+# ============================
+    st.header("💰 Valuation")
+
+    col1, col2 = st.columns(2)
+
+    col1.metric("Entry EV", f"{entry_ev:,.0f}")
+    col2.metric("Exit EV", f"{exit_ev:,.0f}")
