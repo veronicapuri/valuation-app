@@ -496,12 +496,12 @@ col1.metric("MOIC", f"{moic:.2f}x")
 col2.metric("IRR", f"{irr*100:.2f}%")
     
 
-    # ============================
-    # VALUATION
-    # ============================
+# ============================
+# VALUATION
+# ============================
 
-    st.header("💰 Valuation")
+st.header("💰 Valuation")
 
-    col1, col2 = st.columns(2)
-    col1.metric("Entry EV", f"{entry_ev:,.0f}")
-    col2.metric("Exit EV", f"{exit_ev:,.0f}")
+col1, col2 = st.columns(2)
+col1.metric("Entry EV", f"{entry_ev:,.0f}")
+col2.metric("Exit EV", f"{exit_ev:,.0f}")
