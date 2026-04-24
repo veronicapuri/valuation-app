@@ -137,9 +137,13 @@ def detect_sections(df):
 
 
 def smart_classify(df):
+    
     df = df.copy()
 
     def rule(row):
+        if row.get("Row Type") != "Line":
+            return "Ignore"
+
         item = str(row["Line Item"]).lower()
         section = row.get("Section", "Unknown")
 
