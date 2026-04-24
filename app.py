@@ -415,7 +415,8 @@ if pl_file:
     # -----------------------
     # ENTRY
     # -----------------------
-    entry_ev = ebitda * entry_multiple
+    base_ebitda = ebitda
+    entry_ev = base_ebitda * entry_multiple
     
     if bs_file and debt > 0:
         entry_debt = debt
