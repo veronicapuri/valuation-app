@@ -162,30 +162,41 @@ def smart_classify(df):
         if section == "Other Income Section":
             return "Other Income"
 
-        # -------- FALLBACK LOGIC --------
+        # -------- FALLBACK LOGIC (STRICT ORDER) --------
+
+        # 1. Revenue (only explicit)
         if any(x in item for x in ["revenue", "sales"]):
             return "Revenue"
 
-        if any(x in item for x in ["cost of sales", "cogs"]):
+        # 2. COGS (VERY IMPORTANT — put BEFORE OpEx)
+        if any(x in item for x in [
+            "cost of goods", "cost of sales", "cogs",
+            "direct cost", "materials", "inventory", "purchases"
+        ]):
             return "COGS"
-
+        
+        # 3. D&A (separate from OpEx)
+        if any(x in item for x in ["depreciation", "amortization"]):
+            return "D&A"
+        
+        # 4. OpEx (AFTER COGS)
         if any(x in item for x in [
             "salary","wage","rent","expense","admin","marketing",
             "utilities","insurance","travel","professional",
             "subscription","fee","bank"
         ]):
             return "OpEx"
-
-        if any(x in item for x in ["depreciation", "amortization"]):
-            return "D&A"
-
+        
+        # 5. Other income
         if any(x in item for x in ["grant", "fx", "gain", "interest income"]):
             return "Other Income"
-
+        
+        # 6. Below EBITDA
         if any(x in item for x in ["tax", "interest expense"]):
             return "Below EBITDA"
-
+        
         return "Other"
+                
 
     df["Category"] = df.apply(rule, axis=1)
     return df
@@ -375,6 +386,7 @@ if pl_file:
     else:
         col4.metric("Net Debt", f"{net_debt:,.0f}")
 
+    base_ebitda = ebitda
     # ============================
     # FORECAST
     # ============================
@@ -403,9 +415,6 @@ if pl_file:
 # ============================
 # REAL 3-STATEMENT LBO ENGINE
 # ============================
-# ============================
-# REAL 3-STATEMENT LBO ENGINE (FIXED)
-# ============================
 
     st.header("🏦 LBO Analysis (3-Statement)")
 
@@ -415,7 +424,6 @@ if pl_file:
     # -----------------------
     # ENTRY
     # -----------------------
-    base_ebitda = ebitda
     entry_ev = base_ebitda * entry_multiple
     
     if bs_file and debt > 0:
