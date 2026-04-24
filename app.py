@@ -356,8 +356,8 @@ if pl_file:
 
     for y in range(holding_years):
         rev *= (1 + growth_rate)
-        ebit = rev * margins[y]
-        rows.append([f"Y{y+1}", rev, ebit, margins[y]*100])
+        ebitda = rev * margins[y]
+        rows.append([f"Y{y+1}", rev, ebitda, margins[y]*100])
 
     f = pd.DataFrame(rows, columns=["Year","Revenue","EBITDA","Margin %"])
 
@@ -422,9 +422,17 @@ for i in range(holding_years):
     # CASH FLOW
     # -----------------------
     delta_nwc = rev * nwc_pct
+    st.write("Delta NWC:", delta_nwc)
     capex = rev * capex_pct
 
     fcf = net_income + dna - capex - delta_nwc
+    st.write({
+        "Net Income": net_income,
+        "D&A": dna,
+        "Capex": capex,
+        "Delta NWC": delta_nwc,
+        "FCF": fcf
+    })
 
     # -----------------------
     # DEBT SCHEDULE
@@ -470,12 +478,27 @@ exit_ebitda = lbo_rows[-1][2]
 exit_ev = exit_ebitda * exit_multiple
 exit_equity = exit_ev - debt_open
 
+debug = st.sidebar.checkbox("Show Debug")
+
+if debug:
+    st.write("Entry Equity:", entry_equity)
+    st.write("Exit EV:", exit_ev)
+    st.write("Exit Equity:", exit_equity)
+    st.write("Final Debt:", debt_open)
+
 cash_flows.append(exit_equity)
-st.write("Cash flows:", cash_flows)
+debug = st.sidebar.checkbox("Show Debug")
+
+if debug:
+    st.write("Cash flows:", cash_flows)
 
 # -----------------------
 # IRR (robust)
 # -----------------------
+debug = st.sidebar.checkbox("Show Debug")
+
+if debug:
+    st.write("Final Cash Flows Used for IRR:", cash_flows)
 def compute_irr(cf):
     try:
         return np_financial_irr(cf)
