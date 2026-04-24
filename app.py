@@ -403,10 +403,20 @@ if pl_file:
 # ============================
 # REAL 3-STATEMENT LBO ENGINE
 # ============================
+# ============================
+# REAL 3-STATEMENT LBO ENGINE (FIXED)
+# ============================
 
     st.header("🏦 LBO Analysis (3-Statement)")
 
+    # Debug toggle (define ONCE)
+    debug = st.sidebar.checkbox("Show Debug")
+
+    # -----------------------
+    # ENTRY
+    # -----------------------
     entry_ev = ebitda * entry_multiple
+    
     if bs_file and debt > 0:
         entry_debt = debt
         entry_equity = entry_ev - entry_debt + cash
@@ -414,75 +424,84 @@ if pl_file:
         entry_debt = entry_ev * debt_pct
         entry_equity = entry_ev - entry_debt
 
+    # Use separate LBO cash (DO NOT overwrite BS cash)
+    cash_lbo = 0
     debt_open = entry_debt
-    cash = 0
-
+    
     cash_flows = [-entry_equity]
     lbo_rows = []
-
+    
     rev = revenue
     base_margin = ebitda / revenue if revenue else margins[0]
-
+    
+    # -----------------------
+    # LOOP
+    # -----------------------
     for i in range(holding_years):
-
-        prev_rev = rev 
+    
+        prev_rev = rev  # ✅ FIXED
+    
         # -----------------------
         # OPERATING MODEL
         # -----------------------
         rev *= (1 + growth_rate)
         margin = margins[i] if margins else base_margin
         ebitda_y = rev * margin
-
+    
         dna = rev * dna_pct
         ebit = ebitda_y - dna
-
+    
         # -----------------------
         # DEBT + INTEREST
         # -----------------------
         interest = debt_open * interest_rate
-
+    
         # -----------------------
         # TAX
         # -----------------------
         taxable_income = max(0, ebit - interest)
         tax = taxable_income * tax_rate
-
+    
         net_income = ebit - interest - tax
-
+    
         # -----------------------
         # CASH FLOW
         # -----------------------
         delta_nwc = (rev - prev_rev) * nwc_pct
-        st.write("Delta NWC:", delta_nwc)
         capex = rev * capex_pct
-
+    
         fcf = net_income + dna - capex - delta_nwc
-        st.write({
-            "Net Income": net_income,
-            "D&A": dna,
-            "Capex": capex,
-            "Delta NWC": delta_nwc,
-            "FCF": fcf
-        })
-
+    
         # -----------------------
         # DEBT SCHEDULE
         # -----------------------
         mandatory_amort = debt_open * amort_pct
     
-        # cash builds AFTER mandatory amort assumption
-        cash += max(0, fcf - mandatory_amort)
-    
-        cash_sweep = max(0, cash)
+        cash_lbo += max(0, fcf - mandatory_amort)
+        cash_sweep = max(0, cash_lbo)
     
         total_repayment = min(debt_open, mandatory_amort + cash_sweep)
     
-        # reduce cash AFTER sweep
-        cash -= cash_sweep
-    
+        cash_lbo -= cash_sweep
         debt_close = debt_open - total_repayment
     
-        # ===== DEBUG (ADD HERE) =====
+        # -----------------------
+        # STORE (FIXED POSITION)
+        # -----------------------
+        lbo_rows.append([
+            f"Y{i+1}",
+            rev,
+            ebitda_y,
+            ebit,
+            net_income,
+            fcf,
+            debt_open,
+            debt_close
+        ])
+    
+        # -----------------------
+        # DEBUG (SAFE)
+        # -----------------------
         if debug:
             st.write({
                 "Year": i+1,
@@ -495,94 +514,69 @@ if pl_file:
                 "Debt Open": debt_open,
                 "Debt Close": debt_close
             })
-        
-    # ============================
-    # -----------------------
-    # STORE
-    # -----------------------
-    lbo_rows.append([
-        f"Y{i+1}",
-        rev,
-        ebitda_y,
-        ebit,
-        net_income,
-        fcf,
-        debt_open,
-        debt_close
-    ])
-
-    debt_open = debt_close
-
-    # Only final year gets exit cash flow
-    if i < holding_years - 1:
-        cash_flows.append(0)
-
-# -----------------------
-# EXIT
-# -----------------------
-exit_ebitda = lbo_rows[-1][2]
-exit_ev = exit_ebitda * exit_multiple
-exit_equity = exit_ev - debt_open
-
-debug = st.sidebar.checkbox("Show Debug")
-
-if debug:
-    st.write("Entry Equity:", entry_equity)
-    st.write("Exit EV:", exit_ev)
-    st.write("Exit Equity:", exit_equity)
-    st.write("Final Debt:", debt_open)
-
-cash_flows.append(exit_equity)
-debug = st.sidebar.checkbox("Show Debug")
-
-if debug:
-    st.write("Cash flows:", cash_flows)
-
-# -----------------------
-# IRR (robust)
-# -----------------------
-debug = st.sidebar.checkbox("Show Debug")
-
-if debug:
-    st.write("Final Cash Flows Used for IRR:", cash_flows)
-def compute_irr(cf):
-    try:
-        return np_financial_irr(cf)
-    except:
-        return 0
-
-def np_financial_irr(cf):
-    import numpy_financial as npf
-    return npf.irr(cf)
     
-irr = compute_irr(cash_flows)
-moic = exit_equity / entry_equity if entry_equity else 0
-
-# -----------------------
-# OUTPUT TABLE
-# -----------------------
-lbo_df = pd.DataFrame(
-    lbo_rows,
-    columns=[
-        "Year","Revenue","EBITDA","EBIT",
-        "Net Income","FCF","Opening Debt","Closing Debt"
-    ]
-)
-
-st.dataframe(lbo_df.style.format({
-    "Revenue": "{:,.0f}",
-    "EBITDA": "{:,.0f}",
-    "EBIT": "{:,.0f}",
-    "Net Income": "{:,.0f}",
-    "FCF": "{:,.0f}",
-    "Opening Debt": "{:,.0f}",
-    "Closing Debt": "{:,.0f}"
-}))
-
-col1, col2 = st.columns(2)
-col1.metric("MOIC", f"{moic:.2f}x")
-col2.metric("IRR", f"{irr*100:.2f}%")
+        debt_open = debt_close
     
+        # Only exit year has cash flow
+        if i < holding_years - 1:
+            cash_flows.append(0)
+    
+    # -----------------------
+    # BUILD DATAFRAME (CRITICAL)
+    # -----------------------
+    lbo_df = pd.DataFrame(
+        lbo_rows,
+        columns=[
+            "Year","Revenue","EBITDA","EBIT",
+            "Net Income","FCF","Opening Debt","Closing Debt"
+        ]
+    )
+    
+    # -----------------------
+    # EXIT (FIXED)
+    # -----------------------
+    exit_ebitda = lbo_df.iloc[-1]["EBITDA"]
+    exit_ev = exit_ebitda * exit_multiple
+    exit_equity = exit_ev - lbo_df.iloc[-1]["Closing Debt"]
+    
+    cash_flows.append(exit_equity)
+    
+    # -----------------------
+    # IRR (ROBUST)
+    # -----------------------
+    def compute_irr(cf):
+        try:
+            import numpy_financial as npf
+            return npf.irr(cf)
+        except:
+            return 0
+    
+    irr = compute_irr(cash_flows)
+    moic = exit_equity / entry_equity if entry_equity else 0
+    
+    # -----------------------
+    # DEBUG CASH FLOWS
+    # -----------------------
+    if debug:
+        st.write("Cash Flows:", cash_flows)
+        st.write("Exit Equity:", exit_equity)
+    
+    # -----------------------
+    # OUTPUT
+    # -----------------------
+    st.dataframe(lbo_df.style.format({
+        "Revenue": "{:,.0f}",
+        "EBITDA": "{:,.0f}",
+        "EBIT": "{:,.0f}",
+        "Net Income": "{:,.0f}",
+        "FCF": "{:,.0f}",
+        "Opening Debt": "{:,.0f}",
+        "Closing Debt": "{:,.0f}"
+    }))
+    
+    col1, col2 = st.columns(2)
+    col1.metric("MOIC", f"{moic:.2f}x")
+    col2.metric("IRR", f"{irr*100:.2f}%")
 
 # ============================
 # VALUATION
