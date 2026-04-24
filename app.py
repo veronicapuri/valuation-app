@@ -94,6 +94,24 @@ def load_file(file):
 # STRUCTURE-AWARE CLASSIFICATION (DALOOPA STYLE)
 # ============================
 
+def detect_row_type(item):
+    text = str(item).strip().lower()
+
+    if text == "" or text in ["nan"]:
+        return "Empty"
+
+    if any(x in text for x in [
+        "total", "subtotal", "net profit", "gross profit"
+    ]):
+        return "Total"
+
+    if any(x in text for x in [
+        "income", "expenses", "assets", "liabilities"
+    ]) and len(text.split()) <= 3:
+        return "Header"
+
+    return "Line"
+    
 def detect_sections(df):
     sections = []
     current = "Unknown"
@@ -283,9 +301,14 @@ with col2:
 if pl_file:
     df_raw = load_file(pl_file)
     df, lc, ac = clean_dataframe(df_raw)
+    
     df = standardize(df, lc, ac)
+    
+    df["Row Type"] = df["Line Item"].apply(detect_row_type)
+    
     df = detect_sections(df)
     df = smart_classify(df)
+    
     totals = detect_totals(df)
     df = auto_fix(df, totals)
     reconcile(df, totals)
