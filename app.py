@@ -404,26 +404,26 @@ if pl_file:
 # REAL 3-STATEMENT LBO ENGINE
 # ============================
 
-st.header("🏦 LBO Analysis (3-Statement)")
+    st.header("🏦 LBO Analysis (3-Statement)")
 
-entry_ev = ebitda * entry_multiple
-if bs_file and debt > 0:
-    entry_debt = debt
-    entry_equity = entry_ev - entry_debt + cash
-else:
-    entry_debt = entry_ev * debt_pct
-    entry_equity = entry_ev - entry_debt
+    entry_ev = ebitda * entry_multiple
+    if bs_file and debt > 0:
+        entry_debt = debt
+        entry_equity = entry_ev - entry_debt + cash
+    else:
+        entry_debt = entry_ev * debt_pct
+        entry_equity = entry_ev - entry_debt
 
-debt_open = entry_debt
-cash = 0
+    debt_open = entry_debt
+    cash = 0
 
-cash_flows = [-entry_equity]
-lbo_rows = []
+    cash_flows = [-entry_equity]
+    lbo_rows = []
 
-rev = revenue
-base_margin = ebitda / revenue if revenue else margins[0]
+    rev = revenue
+    base_margin = ebitda / revenue if revenue else margins[0]
 
-for i in range(holding_years):
+    for i in range(holding_years):
 
     # -----------------------
     # OPERATING MODEL
