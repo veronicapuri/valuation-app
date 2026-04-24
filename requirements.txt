@@ -5,3 +5,4 @@ openai
 pdfplumber
 pdfminer.six
 numpy-financial
+openpyxl
