@@ -369,6 +369,7 @@ if pl_file:
 
     exit_ebitda = f.iloc[-1]["EBITDA"]
 
+if pl_file:
 # ============================
 # REAL 3-STATEMENT LBO ENGINE
 # ============================
@@ -376,8 +377,12 @@ if pl_file:
 st.header("🏦 LBO Analysis (3-Statement)")
 
 entry_ev = ebitda * entry_multiple
-entry_debt = entry_ev * debt_pct
-entry_equity = entry_ev - entry_debt
+if bs_file and debt > 0:
+    entry_debt = debt
+    entry_equity = entry_ev - entry_debt + cash
+else:
+    entry_debt = entry_ev * debt_pct
+    entry_equity = entry_ev - entry_debt
 
 debt_open = entry_debt
 cash = 0
@@ -386,6 +391,7 @@ cash_flows = [-entry_equity]
 lbo_rows = []
 
 rev = revenue
+base_margin = ebitda / revenue if revenue else margins[0]
 
 for i in range(holding_years):
 
@@ -393,7 +399,7 @@ for i in range(holding_years):
     # OPERATING MODEL
     # -----------------------
     rev *= (1 + growth_rate)
-    margin = margins[i]
+    margin = margins[i] if margins else base_margin
     ebitda_y = rev * margin
 
     dna = rev * dna_pct
@@ -424,9 +430,17 @@ for i in range(holding_years):
     # DEBT SCHEDULE
     # -----------------------
     mandatory_amort = debt_open * amort_pct
-    cash_sweep = max(0, fcf - mandatory_amort)
+
+    # cash builds AFTER mandatory amort assumption
+    cash += max(0, fcf - mandatory_amort)
+
+    cash_sweep = max(0, cash)
 
     total_repayment = min(debt_open, mandatory_amort + cash_sweep)
+
+    # reduce cash AFTER sweep
+    cash -= cash_sweep
+
     debt_close = debt_open - total_repayment
 
     # -----------------------
@@ -463,10 +477,14 @@ cash_flows.append(exit_equity)
 # -----------------------
 def compute_irr(cf):
     try:
-        return np.irr(cf)
+        return np_financial_irr(cf)
     except:
         return 0
 
+def np_financial_irr(cf):
+    import numpy_financial as npf
+    return npf.irr(cf)
+    
 irr = compute_irr(cash_flows)
 moic = exit_equity / entry_equity if entry_equity else 0
 
