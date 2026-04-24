@@ -428,74 +428,74 @@ if pl_file:
     # -----------------------
     # OPERATING MODEL
     # -----------------------
-    rev *= (1 + growth_rate)
-    margin = margins[i] if margins else base_margin
-    ebitda_y = rev * margin
+        rev *= (1 + growth_rate)
+        margin = margins[i] if margins else base_margin
+        ebitda_y = rev * margin
 
-    dna = rev * dna_pct
-    ebit = ebitda_y - dna
+        dna = rev * dna_pct
+        ebit = ebitda_y - dna
 
-    # -----------------------
-    # DEBT + INTEREST
-    # -----------------------
-    interest = debt_open * interest_rate
+        # -----------------------
+        # DEBT + INTEREST
+        # -----------------------
+        interest = debt_open * interest_rate
 
-    # -----------------------
-    # TAX
-    # -----------------------
-    taxable_income = max(0, ebit - interest)
-    tax = taxable_income * tax_rate
+        # -----------------------
+        # TAX
+        # -----------------------
+        taxable_income = max(0, ebit - interest)
+        tax = taxable_income * tax_rate
 
-    net_income = ebit - interest - tax
+        net_income = ebit - interest - tax
 
-    # -----------------------
-    # CASH FLOW
-    # -----------------------
-    delta_nwc = (rev - prev_rev) * nwc_pct
-    st.write("Delta NWC:", delta_nwc)
-    capex = rev * capex_pct
+        # -----------------------
+        # CASH FLOW
+        # -----------------------
+        delta_nwc = (rev - prev_rev) * nwc_pct
+        st.write("Delta NWC:", delta_nwc)
+        capex = rev * capex_pct
 
-    fcf = net_income + dna - capex - delta_nwc
-    st.write({
-        "Net Income": net_income,
-        "D&A": dna,
-        "Capex": capex,
-        "Delta NWC": delta_nwc,
-        "FCF": fcf
-    })
-
-    # -----------------------
-    # DEBT SCHEDULE
-    # -----------------------
-    mandatory_amort = debt_open * amort_pct
-
-    # cash builds AFTER mandatory amort assumption
-    cash += max(0, fcf - mandatory_amort)
-
-    cash_sweep = max(0, cash)
-
-    total_repayment = min(debt_open, mandatory_amort + cash_sweep)
-
-    # reduce cash AFTER sweep
-    cash -= cash_sweep
-
-    debt_close = debt_open - total_repayment
-
-    # ===== DEBUG (ADD HERE) =====
-    if debug:
+        fcf = net_income + dna - capex - delta_nwc
         st.write({
-            "Year": i+1,
-            "Revenue": rev,
-            "EBITDA": ebitda_y,
-            "EBIT": ebit,
-            "Interest": interest,
             "Net Income": net_income,
-            "FCF": fcf,
-            "Debt Open": debt_open,
-            "Debt Close": debt_close
+            "D&A": dna,
+            "Capex": capex,
+            "Delta NWC": delta_nwc,
+            "FCF": fcf
         })
+
+        # -----------------------
+        # DEBT SCHEDULE
+        # -----------------------
+        mandatory_amort = debt_open * amort_pct
     
-# ============================
+        # cash builds AFTER mandatory amort assumption
+        cash += max(0, fcf - mandatory_amort)
+    
+        cash_sweep = max(0, cash)
+    
+        total_repayment = min(debt_open, mandatory_amort + cash_sweep)
+    
+        # reduce cash AFTER sweep
+        cash -= cash_sweep
+    
+        debt_close = debt_open - total_repayment
+    
+        # ===== DEBUG (ADD HERE) =====
+        if debug:
+            st.write({
+                "Year": i+1,
+                "Revenue": rev,
+                "EBITDA": ebitda_y,
+                "EBIT": ebit,
+                "Interest": interest,
+                "Net Income": net_income,
+                "FCF": fcf,
+                "Debt Open": debt_open,
+                "Debt Close": debt_close
+            })
+        
+    # ============================
     # -----------------------
     # STORE
     # -----------------------
