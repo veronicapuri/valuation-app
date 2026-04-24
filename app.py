@@ -328,10 +328,12 @@ if pl_file:
     clean_df = df[df["Category"] != "Ignore"]
     st.dataframe(clean_df.groupby("Category")["Amount"].sum())
 
-    revenue = df[df.Category == "Revenue"]["Amount"].sum()
-    cogs = df[df.Category == "COGS"]["Amount"].sum()
-    opex = df[df.Category == "OpEx"]["Amount"].sum()
-    other_income = df[df.Category == "Other Income"]["Amount"].sum()
+    clean_df = df[df["Category"] != "Ignore"]
+
+    revenue = clean_df[clean_df.Category == "Revenue"]["Amount"].sum()
+    cogs = clean_df[clean_df.Category == "COGS"]["Amount"].sum()
+    opex = clean_df[clean_df.Category == "OpEx"]["Amount"].sum()
+    other_income = clean_df[clean_df.Category == "Other Income"]["Amount"].sum()
 
     ebitda = revenue - cogs - opex + other_income
 
