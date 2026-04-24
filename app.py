@@ -421,7 +421,7 @@ for i in range(holding_years):
     # -----------------------
     # CASH FLOW
     # -----------------------
-    delta_nwc = rev * nwc_pct
+    delta_nwc = (rev - prev_rev) * nwc_pct
     st.write("Delta NWC:", delta_nwc)
     capex = rev * capex_pct
 
@@ -451,6 +451,21 @@ for i in range(holding_years):
 
     debt_close = debt_open - total_repayment
 
+    # ===== DEBUG (ADD HERE) =====
+    if debug:
+        st.write({
+            "Year": i+1,
+            "Revenue": rev,
+            "EBITDA": ebitda_y,
+            "EBIT": ebit,
+            "Interest": interest,
+            "Net Income": net_income,
+            "FCF": fcf,
+            "Debt Open": debt_open,
+            "Debt Close": debt_close
+        })
+    
+# ============================
     # -----------------------
     # STORE
     # -----------------------
