@@ -471,6 +471,7 @@ exit_ev = exit_ebitda * exit_multiple
 exit_equity = exit_ev - debt_open
 
 cash_flows.append(exit_equity)
+st.write("Cash flows:", cash_flows)
 
 # -----------------------
 # IRR (robust)
