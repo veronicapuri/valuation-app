@@ -479,7 +479,7 @@ if pl_file:
         mandatory_amort = debt_open * amort_pct
     
         cash_lbo += max(0, fcf - mandatory_amort)
-        cash_sweep = max(0, cash_lbo)
+        cash_sweep = max(0, cash * 0.9)  # keep 10% buffer
     
         total_repayment = min(debt_open, mandatory_amort + cash_sweep)
     
