@@ -425,9 +425,10 @@ if pl_file:
 
     for i in range(holding_years):
 
-    # -----------------------
-    # OPERATING MODEL
-    # -----------------------
+        prev_rev = rev 
+        # -----------------------
+        # OPERATING MODEL
+        # -----------------------
         rev *= (1 + growth_rate)
         margin = margins[i] if margins else base_margin
         ebitda_y = rev * margin
