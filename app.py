@@ -325,7 +325,8 @@ if pl_file:
         st.dataframe(df)
 
     st.subheader("🔍 Classification Breakdown")
-    st.dataframe(df.groupby("Category")["Amount"].sum())
+    clean_df = df[df["Category"] != "Ignore"]
+    st.dataframe(clean_df.groupby("Category")["Amount"].sum())
 
     revenue = df[df.Category == "Revenue"]["Amount"].sum()
     cogs = df[df.Category == "COGS"]["Amount"].sum()
