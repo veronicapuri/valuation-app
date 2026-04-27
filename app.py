@@ -394,7 +394,7 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
 # =========================================
 # LBO ENGINE
 # =========================================
-def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, receivables: float, inventory: float, payables:, params: dict) -> tuple[pd.DataFrame, dict]:
+def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, receivables: float, inventory: float, payables:float, params: dict) -> tuple[pd.DataFrame, dict]:
 def run_lbo(metrics: dict, bs: dict, params: dict) -> tuple[pd.DataFrame, dict]:
 
     # =========================
