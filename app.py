@@ -9,6 +9,7 @@ import json, os
 st.set_page_config(layout="wide")
 
 st.title("📊 SME Valuation & LBO Tool")
+st.caption("AI-powered SME valuation, classification, and LBO modeling platform")
 
 st.markdown("---")
 
