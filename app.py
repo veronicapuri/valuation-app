@@ -242,9 +242,9 @@ def standardize_bs(df):
     # 🔥 CRITICAL: DO NOT fillna yet — inspect first
     return df
 
-st.write("Detected BS columns:", dfb.columns.tolist())
-st.write("Raw BS preview:", dfb.head(10))
-st.write("Non-zero count:", (dfb["Amount"] != 0).sum())
+    st.write("Detected BS columns:", dfb.columns.tolist())
+    st.write("Raw BS preview:", dfb.head(10))
+    st.write("Non-zero count:", (dfb["Amount"] != 0).sum())
 
 def classify_bs(df):
     df = df.copy()
