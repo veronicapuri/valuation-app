@@ -55,17 +55,39 @@ def dedupe_columns(df):
     
 def standardize(df):
     df = df.copy()
-    df.columns = list(df.columns)
 
-    if len(df.columns) < 2:
-        raise ValueError("Not enough columns")
+    # Ensure string columns
+    df.columns = [str(c).strip() for c in df.columns]
 
-    df.rename(columns={
-        df.columns[0]: "Line Item",
-        df.columns[1]: "Amount"
-    }, inplace=True)
+    # First column = line item
+    line_col = df.columns[0]
 
-    return df[["Line Item", "Amount"]]
+    # Find numeric columns
+    numeric_cols = df.columns[1:]
+
+    # Try convert all numeric columns
+    for col in numeric_cols:
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.replace(",", "")
+            .str.replace("(", "-")
+            .str.replace(")", "")
+        )
+
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Pick the BEST column (latest year or most filled)
+    best_col = max(numeric_cols, key=lambda c: df[c].abs().sum())
+
+    return pd.DataFrame({
+        "Line Item": df[line_col],
+        "Amount": df[best_col]
+    })
+
+    if not isinstance(df["Amount"], pd.Series):
+        st.error("🚨 Amount column is not valid — check input format")
+        st.stop()
 
 # =========================================
 # CLASSIFICATION ENGINE (BULLETPROOF)
