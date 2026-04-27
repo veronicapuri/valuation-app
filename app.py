@@ -485,10 +485,14 @@ def run_lbo(metrics, bs, params):
     irr = moic ** (1 / params["years"]) - 1 if moic > 0 else 0
 
     returns = {
+        "Entry EV": entry_ev,
+        "Debt": total_debt,
+        "Equity In": equity_in,
+        "Exit EV": exit_ev,
+        "Exit Equity": exit_equity,
         "MOIC": moic,
         "IRR": irr
     }
-
     return lbo_df, returns
 
 # =========================================
