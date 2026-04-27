@@ -96,33 +96,34 @@ def load_file(file):
 
 def detect_row_type(item):
     import re
-    
-    def detect_row_type(item):
-        text = str(item).strip().lower()
-    
-        if text == "" or text in ["nan", "none"]:
-            return "Empty"
-    
-        # ONLY true headers / metadata
-        if (
-            "year ended" in text or
-            "as at" in text or
-            re.fullmatch(r"\d{4}", text) or
-            text.startswith("note ")
-        ):
-            return "Meta"
-    
-        if any(x in text for x in [
-            "total", "subtotal", "net profit", "gross profit"
-        ]):
-            return "Total"
-    
-        if any(x in text for x in [
-            "income", "expenses"
-        ]) and len(text.split()) <= 3:
-            return "Header"
-    
-        return "Line"
+
+    text = str(item).strip().lower()
+
+    if text == "" or text in ["nan", "none"]:
+        return "Empty"
+
+    if (
+        "year ended" in text or
+        "as at" in text or
+        re.fullmatch(r"\d{4}", text)
+    ):
+        return "Meta"
+
+    if any(x in text for x in [
+        "total", "subtotal", "net profit", "gross profit"
+    ]):
+        return "Total"
+
+    if any(x in text for x in [
+        "income", "expenses"
+    ]) and len(text.split()) <= 3:
+        return "Header"
+
+    return "Line"
+
+df["Row Type"] = df["Line Item"].apply(detect_row_type)
+
+st.write("Row Type distribution:", df["Row Type"].value_counts())
     
 def detect_sections(df):
     sections = []
