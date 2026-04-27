@@ -391,107 +391,64 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =========================================
-# LBO ENGINE (CLEAN, STABLE, FULL)
+# LBO ENGINE
 # =========================================
-def run_lbo(metrics: dict, bs: dict, params: dict) -> tuple[pd.DataFrame, dict]:
-
-    # =========================
-    # SAFE INPUTS
-    # =========================
-    revenue = metrics.get("Revenue", 0)
-    ebitda  = metrics.get("EBITDA", 0)
+def run_lbo(metrics, bs, params):
 
     cash_bs = bs.get("cash", 0)
     debt_bs = bs.get("debt", 0)
-    receivables = bs.get("receivables", 0)
-    inventory = bs.get("inventory", 0)
-    payables = bs.get("payables", 0)
 
-    entry_multiple = params.get("entry_multiple", 5.0)
-    exit_multiple  = params.get("exit_multiple", 6.0)
-    leverage_pct   = params.get("leverage_pct", 0.6)
-    growth         = params.get("growth", 0.05)
-    years          = max(1, params.get("years", 5))
+    ebitda = metrics.get("EBITDA", 0)
+    revenue = metrics.get("Revenue", 0)
 
-    margins   = params.get("margins", [0.2] * years)
-    tlb_rate  = params.get("tlb_rate", 0.07)
-    rev_rate  = params.get("rev_rate", 0.06)
-    tax_rate  = params.get("tax_rate", 0.25)
-    capex_pct = params.get("capex_pct", 0.05)
-    da_pct    = params.get("da_pct", 0.03)
-    min_cash  = params.get("min_cash", 0)
+    entry_ev = ebitda * params["entry_multiple"]
+    total_debt = entry_ev * params["leverage_pct"]
 
-    # =========================
-    # ENTRY
-    # =========================
-    entry_ev   = ebitda * entry_multiple
-    total_debt = entry_ev * leverage_pct
-
-    tlb      = total_debt * 0.85
+    tlb = total_debt * 0.85
     revolver = total_debt * 0.15
 
     equity_in = entry_ev - total_debt + (debt_bs - cash_bs)
 
-    # =========================
-    # INITIAL CONDITIONS
-    # =========================
-    cash = float(min_cash)
+    cash = params["min_cash"]
 
-    # REAL WORKING CAPITAL BASE
-    prev_nwc = receivables + inventory - payables
+    prev_nwc = revenue * params["nwc_pct"]
 
     rows = []
 
-    # =========================
-    # FORECAST LOOP
-    # =========================
-    for i in range(years):
+    for i in range(params["years"]):
 
-        rev = revenue * (1 + growth) ** (i + 1)
+        rev = revenue * (1 + params["growth"]) ** (i + 1)
+        ebitda_y = rev * params["margins"][i]
 
-        margin = margins[i] if i < len(margins) else margins[-1]
-        ebitda_y = rev * margin
-
-        da = rev * da_pct
+        da = rev * params["da_pct"]
         ebit = ebitda_y - da
 
-        interest = tlb * tlb_rate + revolver * rev_rate
-        ebt = ebit - interest
-        tax = max(0.0, ebt * tax_rate)
+        interest = tlb * params["tlb_rate"] + revolver * params["rev_rate"]
+        tax = max(0, (ebit - interest) * params["tax_rate"])
 
-        # =========================
-        # WORKING CAPITAL (SCALED)
-        # =========================
-        nwc = prev_nwc * (rev / revenue if revenue else 1)
+        nwc = rev * params["nwc_pct"]
         delta_nwc = nwc - prev_nwc
         prev_nwc = nwc
 
-        capex = rev * capex_pct
+        capex = rev * params["capex_pct"]
 
-        # =========================
-        # FREE CASH FLOW
-        # =========================
         fcf = ebitda_y - interest - tax - capex - delta_nwc
 
-        # =========================
-        # CASH FLOW WATERFALL
-        # =========================
         cash += fcf
 
-        # Draw revolver if needed
-        if cash < min_cash:
-            draw = min_cash - cash
+        if cash < params["min_cash"]:
+            draw = params["min_cash"] - cash
             revolver += draw
             cash += draw
 
-        # Pay down revolver first
-        excess = max(0.0, cash - min_cash)
+        excess = max(0, cash - params["min_cash"])
+
         pay_rev = min(revolver, excess)
         revolver -= pay_rev
         cash -= pay_rev
 
-        # Then pay down TLB
-        excess = max(0.0, cash - min_cash)
+        excess = max(0, cash - params["min_cash"])
+
         pay_tlb = min(tlb, excess)
         tlb -= pay_tlb
         cash -= pay_tlb
@@ -500,11 +457,6 @@ def run_lbo(metrics: dict, bs: dict, params: dict) -> tuple[pd.DataFrame, dict]:
             "Year": i + 1,
             "Revenue": rev,
             "EBITDA": ebitda_y,
-            "EBITDA Margin": ebitda_y / rev if rev else 0,
-            "Interest": interest,
-            "Tax": tax,
-            "CapEx": capex,
-            "ΔNWC": delta_nwc,
             "FCF": fcf,
             "TLB": tlb,
             "Revolver": revolver,
@@ -514,30 +466,25 @@ def run_lbo(metrics: dict, bs: dict, params: dict) -> tuple[pd.DataFrame, dict]:
 
     lbo_df = pd.DataFrame(rows)
 
-    # =========================
-    # EXIT
-    # =========================
     last = lbo_df.iloc[-1]
 
-    exit_ev = last["EBITDA"] * exit_multiple
+    exit_ev = last["EBITDA"] * params["exit_multiple"]
     exit_equity = exit_ev - last["Net Debt"]
 
     moic = exit_equity / equity_in if equity_in > 0 else 0
-    irr = moic ** (1 / years) - 1 if moic > 0 else 0
+    irr = moic ** (1 / params["years"]) - 1 if moic > 0 else 0
 
     returns = {
-        "Entry EV": entry_ev,
-        "Debt": total_debt,
-        "Equity In": equity_in,
-        "Exit EV": exit_ev,
-        "Exit Equity": exit_equity,
         "MOIC": moic,
         "IRR": irr
     }
 
     return lbo_df, returns
 
-if ebitda > 0:
+# =========================================
+# RUN LBO (SAFE)
+# =========================================
+if pl_metrics["EBITDA"] > 0:
 
     bs_data = {
         "cash": cash_bs,
@@ -548,6 +495,14 @@ if ebitda > 0:
     }
 
     lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
+
+    st.header("LBO Output")
+    st.dataframe(lbo_df)
+
+    st.header("Returns")
+    st.metric("MOIC", f"{returns['MOIC']:.2f}x")
+    st.metric("IRR", f"{returns['IRR']*100:.1f}%")
+
 
 # =========================================
 # FORMATTING HELPERS
