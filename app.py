@@ -204,7 +204,7 @@ def smart_classify(df):
             "insurance",
             "travel","transport","logistics",
             "professional","legal","audit","accounting",
-            "consulting",
+            "consulting", "website",
             "subscription","software","it",
             "bank","charges","fees",
             "maintenance","repair",
