@@ -189,208 +189,85 @@ def compute(df):
     return r, c, o, oi, ebitda, margin
 
 # =========================================
-# BALANCE SHEET (ROBUST INGESTION + CLASSIFICATION)
-# =========================================
-
-def clean_bs(df):
-    df.columns = df.iloc[0].astype(str)
-    df = df[1:].reset_index(drop=True)
-    df = df.dropna(how="all")
-    return df
-
-
-    # 🔥 STEP 1: FORCE UNIQUE COLUMNS
-    def dedupe_columns(df):
-        cols = pd.Series(df.columns)
-        for dup in cols[cols.duplicated()].unique():
-            idxs = cols[cols == dup].index
-            for i, idx in enumerate(idxs):
-                cols[idx] = f"{dup}_{i}" if i > 0 else dup
-        df.columns = cols
-        return df
-
-    # 🔥 STEP 2: convert all to string
-    df = df.astype(str)
-
-    # 🔥 STEP 3: detect numeric column
-    best_col = None
-    best_score = -1
-
-    for col in df.columns:
-        cleaned = (
-            df[col]
-            .str.replace(",", "", regex=False)
-            .str.replace("(", "-", regex=False)
-            .str.replace(")", "", regex=False)
-        )
-
-        score = pd.to_numeric(cleaned, errors="coerce").notna().sum()
-
-        if score > best_score:
-            best_score = score
-            best_col = col
-
-    line_col = df.columns[0]
-
-    # 🔥 STEP 4: FORCE SERIES EXTRACTION (CRITICAL FIX)
-    line_series = df[line_col].astype(str)
-    amount_series = df[best_col].astype(str)
-
-    df_clean = pd.DataFrame({
-        "Line Item": line_series,
-        "Amount": amount_series
-    })
-
-    # 🔥 STEP 5: CLEAN NUMBERS
-    df_clean["Amount"] = (
-        df_clean["Amount"]
-        .str.replace(",", "", regex=False)
-        .str.replace("(", "-", regex=False)
-        .str.replace(")", "", regex=False)
-        .str.strip()
-    )
-
-    df_clean["Amount"] = pd.to_numeric(df_clean["Amount"], errors="coerce")
-
-    return df_clean
-
-
-
-def classify_bs(df):
-    df = df.copy()
-
-    def classify(row):
-        item = str(row["Line Item"]).lower()
-
-        # ASSETS
-        if any(x in item for x in ["cash", "bank"]):
-            return "Cash"
-
-        if any(x in item for x in ["receivable", "debtor"]):
-            return "Accounts Receivable"
-
-        if any(x in item for x in ["inventory", "stock"]):
-            return "Inventory"
-
-        if any(x in item for x in ["property", "plant", "equipment", "ppe"]):
-            return "PPE"
-
-        if any(x in item for x in ["intangible", "goodwill"]):
-            return "Intangibles"
-
-        # LIABILITIES
-        if any(x in item for x in ["payable", "creditor"]):
-            return "Accounts Payable"
-
-        if any(x in item for x in ["loan", "debt", "borrow", "bank loan"]):
-            return "Debt"
-
-        if any(x in item for x in ["accrual", "accrued"]):
-            return "Accruals"
-
-        # EQUITY
-        if any(x in item for x in ["share capital", "equity"]):
-            return "Equity"
-
-        if any(x in item for x in ["retained earnings"]):
-            return "Retained Earnings"
-
-        return "Other"
-
-    df["Category"] = df.apply(classify, axis=1)
-
-    return df
-
-
-# =========================================
-# APPLY BS PIPELINE
-# =========================================
-def standardize_bs(df):
-    df = df.copy()
-
-    # ✅ FIX: dedupe columns properly
-    df = dedupe_columns(df)
-
-    # convert all to string
-    df = df.astype(str)
-
-    # detect numeric column
-    best_col = None
-    best_score = -1
-
-    for col in df.columns:
-        cleaned = (
-            df[col]
-            .str.replace(",", "", regex=False)
-            .str.replace("(", "-", regex=False)
-            .str.replace(")", "", regex=False)
-        )
-
-        score = pd.to_numeric(cleaned, errors="coerce").notna().sum()
-
-        if score > best_score:
-            best_score = score
-            best_col = col
-
-    line_col = df.columns[0]
-
-    # force clean structure
-    df_clean = pd.DataFrame({
-        "Line Item": df[line_col],
-        "Amount": df[best_col]
-    })
-
-    # clean numbers
-    df_clean["Amount"] = (
-        df_clean["Amount"]
-        .str.replace(",", "", regex=False)
-        .str.replace("(", "-", regex=False)
-        .str.replace(")", "", regex=False)
-        .str.strip()
-    )
-
-    df_clean["Amount"] = pd.to_numeric(df_clean["Amount"], errors="coerce")
-
-    return df_clean
-# =========================================
-# BALANCE SHEET (FIXED STRUCTURE)
+# BALANCE SHEET (FINAL CLEAN VERSION)
 # =========================================
 
 cash = 0
 debt = 0
 
 if bs:
-    # 1. LOAD
     dfb = pd.read_excel(bs, header=None)
 
-    # 2. CLEAN HEADER
-    dfb.columns = dfb.iloc[0].astype(str)
-    dfb = dfb[1:].reset_index(drop=True)
+    # 🔥 DO NOT ASSUME HEADER — just clean blanks
     dfb = dfb.dropna(how="all")
 
-    # 3. STANDARDIZE (THIS IS WHERE YOUR FUNCTION RUNS)
-    dfb = standardize_bs(dfb)
+    # 🔥 dedupe columns FIRST
+    dfb = dedupe_columns(dfb)
 
-    # 4. DEBUG (DO NOT REMOVE)
+    # 🔥 convert everything to string
+    dfb = dfb.astype(str)
+
+    # =========================================
+    # AUTO-DETECT AMOUNT COLUMN
+    # =========================================
+    best_col = None
+    best_score = -1
+
+    for col in dfb.columns:
+        cleaned = (
+            dfb[col]
+            .str.replace(",", "", regex=False)
+            .str.replace("(", "-", regex=False)
+            .str.replace(")", "", regex=False)
+        )
+
+        score = pd.to_numeric(cleaned, errors="coerce").notna().sum()
+
+        if score > best_score:
+            best_score = score
+            best_col = col
+
+    line_col = dfb.columns[0]
+
+    dfb = pd.DataFrame({
+        "Line Item": dfb[line_col],
+        "Amount": dfb[best_col]
+    })
+
+    # =========================================
+    # CLEAN NUMBERS
+    # =========================================
+    dfb["Amount"] = (
+        dfb["Amount"]
+        .str.replace(",", "", regex=False)
+        .str.replace("(", "-", regex=False)
+        .str.replace(")", "", regex=False)
+        .str.strip()
+    )
+
+    dfb["Amount"] = pd.to_numeric(dfb["Amount"], errors="coerce")
+
+    # =========================================
+    # DEBUG (VERY IMPORTANT)
+    # =========================================
     st.subheader("BS DEBUG")
-    st.write("Amount type:", type(dfb["Amount"]))
-    st.write("Non-zero values:", (dfb["Amount"] != 0).sum())
+    st.write("Non-zero values:", dfb["Amount"].notna().sum())
     st.dataframe(dfb.head(20))
 
-    # 5. BASIC CLASSIFICATION
+    # =========================================
+    # CLASSIFICATION
+    # =========================================
     dfb["Category"] = dfb["Line Item"].str.lower().apply(lambda x:
         "Cash" if "cash" in x or "bank" in x else
         "Debt" if "loan" in x or "debt" in x or "borrow" in x else
         "Other"
     )
 
-    # 6. EXTRACT VALUES
     cash = dfb[dfb["Category"] == "Cash"]["Amount"].sum()
     debt = dfb[dfb["Category"] == "Debt"]["Amount"].sum()
 
     st.write("Cash:", cash)
     st.write("Debt:", debt)
-
     
 # =========================================
 # UI
