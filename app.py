@@ -290,8 +290,8 @@ def compute_metrics(df):
 
     return revenue, cogs, opex, other_income, ebitda, margin
 
-df = auto_reclassify(df)
-def auto_reclassify(df):
+    df = auto_reclassify(df)
+    def auto_reclassify(df):
     df = df.copy()
 
     for _ in range(3):  # iterate max 3 times
