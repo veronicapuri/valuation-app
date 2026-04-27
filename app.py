@@ -414,91 +414,91 @@ bs_data = {
 
 lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
 
-    cash_bs = bs.get("cash", 0)
-    debt_bs = bs.get("debt", 0)
+cash_bs = bs.get("cash", 0)
+debt_bs = bs.get("debt", 0)
 
-    ebitda = metrics.get("EBITDA", 0)
-    revenue = metrics.get("Revenue", 0)
+ebitda = metrics.get("EBITDA", 0)
+revenue = metrics.get("Revenue", 0)
 
-    entry_ev = ebitda * params["entry_multiple"]
-    total_debt = entry_ev * params["leverage_pct"]
+entry_ev = ebitda * params["entry_multiple"]
+total_debt = entry_ev * params["leverage_pct"]
 
-    tlb = total_debt * 0.85
-    revolver = total_debt * 0.15
+tlb = total_debt * 0.85
+revolver = total_debt * 0.15
 
-    equity_in = entry_ev - total_debt + (debt_bs - cash_bs)
+equity_in = entry_ev - total_debt + (debt_bs - cash_bs)
 
-    cash = params["min_cash"]
+cash = params["min_cash"]
 
-    prev_nwc = revenue * params["nwc_pct"]
+prev_nwc = revenue * params["nwc_pct"]
 
-    rows = []
+rows = []
 
-    for i in range(params["years"]):
+for i in range(params["years"]):
 
-        rev = revenue * (1 + params["growth"]) ** (i + 1)
-        ebitda_y = rev * params["margins"][i]
+    rev = revenue * (1 + params["growth"]) ** (i + 1)
+    ebitda_y = rev * params["margins"][i]
 
-        da = rev * params["da_pct"]
-        ebit = ebitda_y - da
+    da = rev * params["da_pct"]
+    ebit = ebitda_y - da
 
-        interest = tlb * params["tlb_rate"] + revolver * params["rev_rate"]
-        tax = max(0, (ebit - interest) * params["tax_rate"])
+    interest = tlb * params["tlb_rate"] + revolver * params["rev_rate"]
+    tax = max(0, (ebit - interest) * params["tax_rate"])
 
-        nwc = rev * params["nwc_pct"]
-        delta_nwc = nwc - prev_nwc
-        prev_nwc = nwc
+    nwc = rev * params["nwc_pct"]
+    delta_nwc = nwc - prev_nwc
+    prev_nwc = nwc
 
-        capex = rev * params["capex_pct"]
+    capex = rev * params["capex_pct"]
 
-        fcf = ebitda_y - interest - tax - capex - delta_nwc
+    fcf = ebitda_y - interest - tax - capex - delta_nwc
 
-        cash += fcf
+    cash += fcf
 
-        if cash < params["min_cash"]:
-            draw = params["min_cash"] - cash
-            revolver += draw
-            cash += draw
+    if cash < params["min_cash"]:
+        draw = params["min_cash"] - cash
+        revolver += draw
+        cash += draw
 
-        excess = max(0, cash - params["min_cash"])
+    excess = max(0, cash - params["min_cash"])
 
-        pay_rev = min(revolver, excess)
-        revolver -= pay_rev
-        cash -= pay_rev
+    pay_rev = min(revolver, excess)
+    revolver -= pay_rev
+    cash -= pay_rev
 
-        excess = max(0, cash - params["min_cash"])
+    excess = max(0, cash - params["min_cash"])
 
-        pay_tlb = min(tlb, excess)
-        tlb -= pay_tlb
-        cash -= pay_tlb
+    pay_tlb = min(tlb, excess)
+    tlb -= pay_tlb
+    cash -= pay_tlb
 
-        rows.append({
-            "Year": i + 1,
-            "Revenue": rev,
-            "EBITDA": ebitda_y,
-            "FCF": fcf,
-            "TLB": tlb,
-            "Revolver": revolver,
-            "Cash": cash,
-            "Net Debt": tlb + revolver - cash
-        })
+    rows.append({
+        "Year": i + 1,
+        "Revenue": rev,
+        "EBITDA": ebitda_y,
+        "FCF": fcf,
+        "TLB": tlb,
+        "Revolver": revolver,
+        "Cash": cash,
+        "Net Debt": tlb + revolver - cash
+    })
 
-    lbo_df = pd.DataFrame(rows)
+lbo_df = pd.DataFrame(rows)
 
-    last = lbo_df.iloc[-1]
+last = lbo_df.iloc[-1]
 
-    exit_ev = last["EBITDA"] * params["exit_multiple"]
-    exit_equity = exit_ev - last["Net Debt"]
+exit_ev = last["EBITDA"] * params["exit_multiple"]
+exit_equity = exit_ev - last["Net Debt"]
 
-    moic = exit_equity / equity_in if equity_in > 0 else 0
-    irr = moic ** (1 / params["years"]) - 1 if moic > 0 else 0
+moic = exit_equity / equity_in if equity_in > 0 else 0
+irr = moic ** (1 / params["years"]) - 1 if moic > 0 else 0
 
-    returns = {
-        "MOIC": moic,
-        "IRR": irr
-    }
+returns = {
+    "MOIC": moic,
+    "IRR": irr
+}
 
-    return lbo_df, returns
+return lbo_df, returns
 
 # =========================================
 # ---- LBO ----
