@@ -43,8 +43,29 @@ def clean(df):
     df.columns = df.iloc[0]
     return df[1:].reset_index(drop=True)
 
+def dedupe_columns(df):
+    cols = pd.Series(df.columns)
+    for dup in cols[cols.duplicated()].unique():
+        cols[cols[cols == dup].index] = [
+            f"{dup}_{i}" if i != 0 else dup
+            for i in range(sum(cols == dup))
+        ]
+    df.columns = cols
+    return df
+    
 def standardize(df):
-    return df.rename(columns={df.columns[0]: "Line Item", df.columns[1]: "Amount"})
+    df = df.copy()
+    df.columns = list(df.columns)
+
+    if len(df.columns) < 2:
+        raise ValueError("Not enough columns")
+
+    df.rename(columns={
+        df.columns[0]: "Line Item",
+        df.columns[1]: "Amount"
+    }, inplace=True)
+
+    return df[["Line Item", "Amount"]]
 
 # =========================================
 # CLASSIFICATION ENGINE (BULLETPROOF)
