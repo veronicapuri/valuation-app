@@ -93,30 +93,28 @@ def load_file(file):
 # ============================
 # STRUCTURE-AWARE CLASSIFICATION (DALOOPA STYLE)
 # ============================
-
 def detect_row_type(item):
     import re
 
-    text = str(item).strip().lower()
+    text = str(item)
+    if text is None:
+        return "Empty"
+
+    text = text.strip().lower()
 
     if text == "" or text in ["nan", "none"]:
         return "Empty"
 
-    if (
-        "year ended" in text or
-        "as at" in text or
-        re.fullmatch(r"\d{4}", text)
-    ):
+    if "year ended" in text or "as at" in text:
         return "Meta"
 
-    if any(x in text for x in [
-        "total", "subtotal", "net profit", "gross profit"
-    ]):
+    if re.fullmatch(r"\d{4}", text):
+        return "Meta"
+
+    if any(x in text for x in ["total", "subtotal", "net profit", "gross profit"]):
         return "Total"
 
-    if any(x in text for x in [
-        "income", "expenses"
-    ]) and len(text.split()) <= 3:
+    if any(x in text for x in ["income", "expenses"]) and len(text.split()) <= 3:
         return "Header"
 
     return "Line"
@@ -345,19 +343,31 @@ with col2:
 if pl_file:
     df_raw = load_file(pl_file)
     df, lc, ac = clean_dataframe(df_raw)
-    
+
     df = standardize(df, lc, ac)
     
+    # Row type
     df["Row Type"] = df["Line Item"].apply(detect_row_type)
-    df = df[~df["Row Type"].isin(["Meta", "Empty"])]
+    df["Row Type"] = df["Row Type"].fillna("Line")
     
+    # Debug
+    st.write(df[["Line Item", "Row Type"]].head(20))
+    
+    # Sections + classification
     df = detect_sections(df)
     df = smart_classify(df)
     
-    totals = detect_totals(df)
-    df = auto_fix(df, totals)
-    reconcile(df, totals)
-
+    # Debug classification
+    st.write(df[["Line Item", "Row Type", "Category"]].head(30))
+    
+    # ✅ CLEAN DATA (ONLY THIS GOES INTO MODEL)
+    df_clean = df[df["Category"] != "Ignore"]
+    
+    # Totals + reconciliation
+    totals = detect_totals(df_clean)
+    df_clean = auto_fix(df_clean, totals)
+    reconcile(df_clean, totals)
+    
     confidence = classification_confidence(df)
     if confidence < 0.7:
         st.warning("⚠️ Low classification confidence")
