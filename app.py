@@ -198,11 +198,16 @@ def clean_bs(df):
     df = df.dropna(how="all")
     return df
 
-def standardize_bs(df):
-    df = df.copy()
 
     # 🔥 STEP 1: FORCE UNIQUE COLUMNS
-    df.columns = pd.io.parsers.ParserBase({'names': df.columns})._maybe_dedup_names(df.columns)
+    def dedupe_columns(df):
+    cols = pd.Series(df.columns)
+    for dup in cols[cols.duplicated()].unique():
+        idxs = cols[cols == dup].index
+        for i, idx in enumerate(idxs):
+            cols[idx] = f"{dup}_{i}" if i > 0 else dup
+    df.columns = cols
+    return df
 
     # 🔥 STEP 2: convert all to string
     df = df.astype(str)
@@ -300,7 +305,53 @@ def classify_bs(df):
 # =========================================
 # APPLY BS PIPELINE
 # =========================================
+def standardize_bs(df):
+    df = df.copy()
 
+    # ✅ FIX: dedupe columns properly
+    df = dedupe_columns(df)
+
+    # convert all to string
+    df = df.astype(str)
+
+    # detect numeric column
+    best_col = None
+    best_score = -1
+
+    for col in df.columns:
+        cleaned = (
+            df[col]
+            .str.replace(",", "", regex=False)
+            .str.replace("(", "-", regex=False)
+            .str.replace(")", "", regex=False)
+        )
+
+        score = pd.to_numeric(cleaned, errors="coerce").notna().sum()
+
+        if score > best_score:
+            best_score = score
+            best_col = col
+
+    line_col = df.columns[0]
+
+    # force clean structure
+    df_clean = pd.DataFrame({
+        "Line Item": df[line_col],
+        "Amount": df[best_col]
+    })
+
+    # clean numbers
+    df_clean["Amount"] = (
+        df_clean["Amount"]
+        .str.replace(",", "", regex=False)
+        .str.replace("(", "-", regex=False)
+        .str.replace(")", "", regex=False)
+        .str.strip()
+    )
+
+    df_clean["Amount"] = pd.to_numeric(df_clean["Amount"], errors="coerce")
+
+    return df_clean
 # =========================================
 # BALANCE SHEET (FIXED STRUCTURE)
 # =========================================
