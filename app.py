@@ -172,20 +172,55 @@ def smart_classify(df):
         item = str(row["Line Item"]).lower()
         section = row.get("Section", "Unknown")
 
-        # -------- SECTION LOGIC (PRIMARY DRIVER) --------
-        if section == "Revenue Section" and "revenue" in item:
+        # PRIMARY: LINE-LEVEL CLASSIFICATION
+        
+        # Revenue
+        if any(x in item for x in ["revenue", "sales"]):
             return "Revenue"
+        
+        # COGS
+        if any(x in item for x in [
+            "cost of goods", "cost of sales", "cogs",
+            "direct cost", "materials", "inventory", "purchases"
+        ]):
+            return "COGS"
+        
+        # D&A
+        if any(x in item for x in ["depreciation", "amortization"]):
+            return "D&A"
+        
+        # OpEx (EXPANDED — IMPORTANT)
+        if any(x in item for x in [
+            "salary","wage","rent","expense","admin","marketing",
+            "utilities","insurance","travel","professional",
+            "subscription","fee","bank","cleaning","consulting",
+            "cpf","entertainment","office","staff","benefit",
+            "commission","allowance","logistics","freight"
+        ]):
+            return "OpEx"
+        
+        # Other income
+        if any(x in item for x in ["grant", "fx", "gain", "interest income"]):
+            return "Other Income"
+        
+        # Below EBITDA
+        if any(x in item for x in ["tax", "interest expense"]):
+            return "Below EBITDA"
 
+        # fallback using section ONLY if still uncategorized
+        if section == "Revenue Section":
+            return "Revenue"
+        
         if section == "COGS Section":
             return "COGS"
-
+        
         if section == "OpEx Section":
-            if "depreciation" in item:
-                return "D&A"
             return "OpEx"
 
-        if section == "Other Income Section":
-            return "Other Income"
+        if row["Amount"] != 0:
+            return "OpEx"
+        
+        return "Ignore"
 
         # -------- FALLBACK LOGIC (STRICT ORDER) --------
 
