@@ -37,6 +37,24 @@ def standardize(df):
 # =========================================
 # CLASSIFICATION (HYBRID)
 # =========================================
+def is_noise(item):
+    text = str(item).lower()
+
+    # meta / titles
+    if any(x in text for x in [
+        "pte ltd", "for the year", "as at", "account", "unaudited"
+    ]):
+        return True
+
+    # totals / summaries
+    if any(x in text for x in [
+        "total", "net profit", "profit for the year",
+        "comprehensive income", "gross profit"
+    ]):
+        return True
+
+    return False
+
 SCHEMA = {
     "Revenue":["revenue","sales"],
     "COGS":["cost","materials"],
