@@ -668,48 +668,6 @@ if pl_file:
         pl_metrics = compute_pl(active_pl)
  
 # =========================================
-# EDITABLE BALANCE SHEET (LIKE P&L)
-# =========================================
-if bs_file:
-
-    raw_bs = read_any_file(bs_file)
-    dfb = smart_clean(raw_bs)
-
-    # classify first (like P&L)
-    dfb = classify_bs(dfb)
-
-    st.subheader("🧾 Editable Balance Sheet")
-
-    dfb = st.data_editor(
-        dfb,
-        use_container_width=True,
-        num_rows="dynamic",
-        column_config={
-            "Category": st.column_config.SelectboxColumn(
-                "Category",
-                options=BS_CATEGORIES
-            )
-        }
-    )
-
-    # compute values FROM CATEGORY (not keywords)
-    cash_bs = dfb.loc[dfb["Category"] == "Cash", "Amount"].sum()
-    debt_bs = dfb.loc[dfb["Category"] == "Debt", "Amount"].sum()
-    receivables_bs = dfb.loc[dfb["Category"] == "Receivables", "Amount"].sum()
-    inventory_bs = dfb.loc[dfb["Category"] == "Inventory", "Amount"].sum()
-    payables_bs = dfb.loc[dfb["Category"] == "Payables", "Amount"].sum()
-
-    st.subheader("📊 BS Breakdown")
-    st.write({
-        "Cash": cash_bs,
-        "Debt": debt_bs,
-        "Receivables": receivables_bs,
-        "Inventory": inventory_bs,
-        "Payables": payables_bs
-    })
-
-
-# =========================================
 # PROCESS BALANCE SHEET
 # =========================================
 cash_bs = 0.0
@@ -727,10 +685,23 @@ if bs_file:
         receivables_bs = df_bs.loc[df_bs["Category"] == "Receivables", "Amount"].sum()
         inventory_bs   = df_bs.loc[df_bs["Category"] == "Inventory",   "Amount"].sum()
         payables_bs    = df_bs.loc[df_bs["Category"] == "Payables",    "Amount"].sum()
- 
+
+
         with st.expander("🔍 Balance Sheet Preview", expanded=False):
-            st.dataframe(df_bs, use_container_width=True, hide_index=True)
- 
+
+            df_bs = st.data_editor(
+                df_bs,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                column_config={
+                    "Category": st.column_config.SelectboxColumn(
+                        "Category",
+                        options=["Cash","Debt","Receivables","Inventory","Payables","Other"]
+                    )
+                }
+            )
+    
         cash_bs = df_bs.loc[df_bs["Category"] == "Cash",  "Amount"].sum()
         debt_bs = df_bs.loc[df_bs["Category"] == "Debt",  "Amount"].sum()
  
