@@ -90,6 +90,17 @@ def load_file(file):
 
     return None
 
+def is_meta(item):
+    text = str(item).lower()
+    return any(x in text for x in [
+        "for the year ended",
+        "company",
+        "account",
+        "note",
+        "unaudited"
+    ])
+    if is_meta(item):
+        return "Ignore"
 # ============================
 # STRUCTURE-AWARE CLASSIFICATION (DALOOPA STYLE)
 # ============================
@@ -155,16 +166,15 @@ def smart_classify(df):
     df = df.copy()
 
     def rule(row):
-        if row.get("Row Type") != "Line":
+        if row.get("Row Type") in ["Empty"]:
             return "Ignore"
 
         item = str(row["Line Item"]).lower()
         section = row.get("Section", "Unknown")
 
         # -------- SECTION LOGIC (PRIMARY DRIVER) --------
-        if section == "Revenue Section":
-            if any(x in item for x in ["revenue", "sales"]):
-                return "Revenue"
+        if section == "Revenue Section" and "revenue" in item:
+            return "Revenue"
 
         if section == "COGS Section":
             return "COGS"
@@ -196,21 +206,10 @@ def smart_classify(df):
         
         # 4. OpEx (AFTER COGS)
         if any(x in item for x in [
-            "salary","wage","bonus","cpf","staff",
-            "rent","lease",
-            "admin","administrative",
-            "marketing","advertising","promotion",
-            "utilities","electricity","water",
-            "insurance",
-            "travel","transport","logistics",
-            "professional","legal","audit","accounting",
-            "consulting", "website",
-            "subscription","software","it",
-            "bank","charges","fees",
-            "maintenance","repair",
-            "office","supplies",
-            "telephone","internet",
-            "depreciation","amortization"
+            "salary","wage","rent","expense","admin","marketing",
+            "utilities","insurance","travel","professional",
+            "subscription","fee","bank","cleaning","consulting",
+            "cpf","entertainment","office","staff","benefit"
         ]):
             return "OpEx"
         
@@ -228,6 +227,10 @@ def smart_classify(df):
     df["Category"] = df.apply(rule, axis=1)
     return df
 
+if revenue > 0:
+    margin = (revenue - cogs - opex) / revenue
+    if margin > 0.6:
+        st.warning("🚨 EBITDA margin unusually high — classification likely missing costs")
 
 # ============================
 # TOTALS DETECTION
