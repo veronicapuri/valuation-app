@@ -204,9 +204,8 @@ if pl:
     rev=revenue
 
     for i in range(years):
-
-        rev*=1+growth
-        ebitda_y=rev*margins[i]
+        rev = fdf.iloc[i]["Revenue"]
+        ebitda_y = fdf.iloc[i]["EBITDA"]
         if i == 0:
             e = ebitda * (1 + growth)
         else:
@@ -217,11 +216,12 @@ if pl:
         tax = max(0, ebit - interest) * 0.25
         ni = ebit - interest - tax
 
-        capex=rev*0.05
+        da = ebitda_y * 0.1
+        capex = max(da, rev * 0.04)
         fcf=ni-capex
         dna = rev * 0.03
         prev_rev = rev
-        delta_nwc = (rev - prev_rev) * 0.02
+        delta_nwc = rev * 0.05 - prev_rev * 0.05
         fcf = ni + dna - capex - delta_nwc
         
 
@@ -245,6 +245,10 @@ if pl:
         pay_tlb=min(tlb,excess)
         tlb-=pay_tlb
         cash_lbo-=pay_tlb
+        
+        mandatory = tlb * 0.05
+        tlb -= mandatory
+        cash_lbo -= mandatory
 
         rows.append([i+1,rev,ebitda_y,fcf,tlb,revolver])
 
