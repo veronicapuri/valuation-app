@@ -1,21 +1,18 @@
+# =========================================
+# IMPORTS
+# =========================================
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
-import json
-import os
+import json, os, re
 from openai import OpenAI
 
 st.set_page_config(layout="wide")
-
-# ============================
-# OPENAI
-# ============================
 client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY"))
 
-# ============================
+# =========================================
 # MEMORY (LEARNING SYSTEM)
-# ============================
+# =========================================
 MEMORY_FILE = "memory.json"
 
 def load_memory():
@@ -26,203 +23,218 @@ def load_memory():
 def save_memory(mem):
     json.dump(mem, open(MEMORY_FILE, "w"))
 
-# ============================
-# FILE INGESTION
-# ============================
-
-def clean_dataframe(df):
+# =========================================
+# INGESTION
+# =========================================
+def clean(df):
     df.columns = df.iloc[0]
     df = df[1:].reset_index(drop=True)
-    df.columns = [str(c) for c in df.columns]
     return df
 
 def standardize(df):
-    cols = df.columns.tolist()
-    return df.rename(columns={
-        cols[0]: "Line Item",
-        cols[1]: "Amount"
-    })
+    return df.rename(columns={df.columns[0]:"Line Item", df.columns[1]:"Amount"})
 
-# ============================
-# CLASSIFICATION
-# ============================
-
+# =========================================
+# CLASSIFICATION (HYBRID)
+# =========================================
 SCHEMA = {
-    "Revenue": ["revenue","sales"],
-    "COGS": ["cost","materials","cogs"],
-    "OpEx": ["salary","rent","expense","admin","marketing","office"],
-    "D&A": ["depreciation","amortization"],
-    "Other Income": ["interest income","grant","gain"],
-    "Below EBITDA": ["tax","interest expense"]
+    "Revenue":["revenue","sales"],
+    "COGS":["cost","materials"],
+    "OpEx":["salary","rent","expense","admin","marketing","office"],
+    "D&A":["depreciation","amortization"],
+    "Other Income":["interest income","grant"],
+    "Below EBITDA":["tax","interest expense"]
 }
 
-def score_classify(item):
-    item = str(item).lower()
-    scores = {k:0 for k in SCHEMA}
-
-    for k, words in SCHEMA.items():
+def score_classify(x):
+    x=str(x).lower()
+    scores={k:0 for k in SCHEMA}
+    for k,words in SCHEMA.items():
         for w in words:
-            if w in item:
-                scores[k] += 1
-
-    best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "Other"
-
-# ============================
-# AI CLASSIFIER
-# ============================
-
-def ai_classify(items):
-    prompt = f"""
-    Classify each item into:
-    Revenue, COGS, OpEx, D&A, Other Income, Below EBITDA
-
-    Return JSON mapping.
-
-    Items:
-    {items}
-    """
-
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role":"user","content":prompt}],
-        temperature=0
-    )
-
-    return json.loads(res.choices[0].message.content)
+            if w in x:
+                scores[k]+=1
+    best=max(scores,key=scores.get)
+    return best if scores[best]>0 else "Other"
 
 def hybrid_classify(df):
-    df = df.copy()
-    df["Category"] = df["Line Item"].apply(score_classify)
+    df["Category"]=df["Line Item"].apply(score_classify)
 
-    unknown = df[df["Category"] == "Other"]["Line Item"].tolist()
-
+    unknown=df[df["Category"]=="Other"]["Line Item"].tolist()
     if unknown:
         try:
-            ai_map = ai_classify(unknown)
-            df["Category"] = df.apply(
-                lambda x: ai_map.get(x["Line Item"], x["Category"]),
-                axis=1
+            res=client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role":"user","content":f"Classify: {unknown}"}],
+                temperature=0
             )
         except:
             pass
-
     return df
 
-# ============================
-# AUTO RECLASSIFICATION
-# ============================
-
-def compute_metrics(df):
-    r = df[df.Category=="Revenue"]["Amount"].sum()
-    c = df[df.Category=="COGS"]["Amount"].sum()
-    o = df[df.Category=="OpEx"]["Amount"].sum()
-    oi = df[df.Category=="Other Income"]["Amount"].sum()
-    e = r - c - o + oi
-    m = e / r if r else 0
+# =========================================
+# METRICS
+# =========================================
+def compute(df):
+    r=df[df.Category=="Revenue"]["Amount"].sum()
+    c=df[df.Category=="COGS"]["Amount"].sum()
+    o=df[df.Category=="OpEx"]["Amount"].sum()
+    oi=df[df.Category=="Other Income"]["Amount"].sum()
+    e=r-c-o+oi
+    m=e/r if r else 0
     return r,c,o,oi,e,m
 
-def auto_reclassify(df):
-    df = df.copy()
+# =========================================
+# UI INPUTS
+# =========================================
+st.sidebar.header("Deal")
 
-    for _ in range(3):
-        r,c,o,oi,e,m = compute_metrics(df)
+entry_multiple=st.sidebar.number_input("Entry Multiple",4.0)
+exit_multiple=st.sidebar.number_input("Exit Multiple",7.0)
+years=st.sidebar.slider("Holding Period",1,7,5)
 
-        if m > 0.5:
-            df.loc[df.Category=="Other","Category"] = "OpEx"
+growth=st.sidebar.slider("Revenue Growth %",0,30,10)/100
 
-        if m < 0:
-            df.loc[df.Category=="OpEx","Category"] = "Other Income"
+st.sidebar.subheader("Margins")
+margins=[st.sidebar.slider(f"Y{i+1}",0,80,20)/100 for i in range(years)]
 
-    return df
+st.sidebar.subheader("Capital Structure")
+tlb_rate=st.sidebar.slider("TLB Rate",0,15,7)/100
+rev_rate=st.sidebar.slider("Revolver Rate",0,15,6)/100
+min_cash=st.sidebar.number_input("Min Cash",50000)
 
-# ============================
-# LBO MODEL
-# ============================
+# =========================================
+# FILE UPLOAD
+# =========================================
+pl=st.file_uploader("Upload P&L")
+bs=st.file_uploader("Upload BS")
 
-def run_lbo(revenue, ebitda_margin, entry_multiple, exit_multiple, years):
+if pl:
+    df=pd.read_excel(pl)
+    df=standardize(clean(df))
+    df["Amount"]=pd.to_numeric(df["Amount"],errors="coerce").fillna(0)
 
-    entry_ev = revenue * ebitda_margin * entry_multiple
-    debt = entry_ev * 0.6
-    equity = entry_ev - debt
-
-    rev = revenue
-    cash = 0
-
-    for _ in range(years):
-        rev *= 1.1
-        ebitda = rev * ebitda_margin
-        fcf = ebitda * 0.7
-        cash += fcf
-        debt -= fcf * 0.5
-
-    exit_ev = ebitda * exit_multiple
-    exit_equity = exit_ev - debt + cash
-
-    moic = exit_equity / equity
-    irr = moic ** (1/years) - 1
-
-    return entry_ev, exit_ev, moic, irr
-
-# ============================
-# UI
-# ============================
-
-st.title("📊 AI LBO / Ingestion Platform")
-
-file = st.file_uploader("Upload P&L", type=["xlsx","csv"])
-
-if file:
-    df = pd.read_excel(file)
-    df = clean_dataframe(df)
-    df = standardize(df)
-
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
-
-    # classification
-    df = hybrid_classify(df)
+    # classify
+    df=hybrid_classify(df)
 
     # memory
-    mem = load_memory()
-    df["Category"] = df.apply(lambda x: mem.get(x["Line Item"], x["Category"]), axis=1)
+    mem=load_memory()
+    df["Category"]=df.apply(lambda x:mem.get(x["Line Item"],x["Category"]),axis=1)
 
-    # auto fix
-    df = auto_reclassify(df)
+    # manual override
+    df=st.data_editor(df)
+    save_memory({r["Line Item"]:r["Category"] for _,r in df.iterrows()})
 
-    # manual edit
-    st.subheader("Edit Classification")
-    df = st.data_editor(df)
+    # compute
+    revenue,cogs,opex,other,ebitda,margin=compute(df)
 
-    # update memory
-    new_mem = {row["Line Item"]: row["Category"] for _,row in df.iterrows()}
-    save_memory(new_mem)
+    st.header("Snapshot")
+    st.write(revenue,ebitda,margin)
 
-    # metrics
-    r,c,o,oi,e,m = compute_metrics(df)
+    # =========================================
+    # BALANCE SHEET
+    # =========================================
+    cash=0
+    debt=0
 
-    st.subheader("Summary")
-    col1,col2,col3 = st.columns(3)
-    col1.metric("Revenue", f"{r:,.0f}")
-    col2.metric("EBITDA", f"{e:,.0f}")
-    col3.metric("Margin", f"{m*100:.1f}%")
+    if bs:
+        dfb=pd.read_excel(bs)
+        dfb=standardize(clean(dfb))
+        dfb["Amount"]=pd.to_numeric(dfb["Amount"],errors="coerce").fillna(0)
 
-    # LBO
-    entry_ev, exit_ev, moic, irr = run_lbo(r, m, 5, 7, 5)
+        cash=dfb[dfb["Line Item"].str.contains("cash",case=False,na=False)]["Amount"].sum()
+        debt=dfb[dfb["Line Item"].str.contains("debt|loan",case=False,na=False)]["Amount"].sum()
 
-    st.subheader("LBO Output")
-    col1,col2 = st.columns(2)
-    col1.metric("MOIC", f"{moic:.2f}x")
-    col2.metric("IRR", f"{irr*100:.1f}%")
+    # =========================================
+    # FORECAST
+    # =========================================
+    st.header("Forecast")
+    rev=revenue
+    f=[]
+    for i in range(years):
+        rev*=1+growth
+        e=rev*margins[i]
+        f.append([i+1,rev,e])
+    fdf=pd.DataFrame(f,columns=["Year","Revenue","EBITDA"])
+    st.dataframe(fdf)
 
-    # Sensitivity
-    st.subheader("IRR Sensitivity")
+    # =========================================
+    # LBO (FULL WATERFALL)
+    # =========================================
+    st.header("LBO")
 
-    mult_range = np.arange(5,9,1)
-    irr_vals = []
+    entry_ev=ebitda*entry_multiple
+    tlb=entry_ev*0.5
+    revolver=entry_ev*0.1
+    equity=entry_ev-(tlb+revolver)
 
-    for mlt in mult_range:
-        _,_,_,irr_tmp = run_lbo(r, m, 5, mlt, 5)
-        irr_vals.append(round(irr_tmp*100,1))
+    cash_lbo=min_cash
 
-    sens = pd.DataFrame({"Exit Multiple":mult_range,"IRR %":irr_vals})
-    st.dataframe(sens)
+    rows=[]
+    rev=revenue
+
+    for i in range(years):
+
+        rev*=1+growth
+        ebitda_y=rev*margins[i]
+
+        interest=tlb*tlb_rate+revolver*rev_rate
+        tax=max(0,(ebitda_y-interest))*0.25
+        ni=ebitda_y-interest-tax
+
+        capex=rev*0.05
+        fcf=ni-capex
+
+        # cash
+        cash_lbo+=fcf
+
+        # revolver draw
+        if cash_lbo<min_cash:
+            draw=min_cash-cash_lbo
+            revolver+=draw
+            cash_lbo+=draw
+
+        # paydown
+        excess=max(0,cash_lbo-min_cash)
+
+        pay_rev=min(revolver,excess)
+        revolver-=pay_rev
+        cash_lbo-=pay_rev
+
+        excess=max(0,cash_lbo-min_cash)
+        pay_tlb=min(tlb,excess)
+        tlb-=pay_tlb
+        cash_lbo-=pay_tlb
+
+        rows.append([i+1,rev,ebitda_y,fcf,tlb,revolver])
+
+    lbo=pd.DataFrame(rows,columns=["Year","Revenue","EBITDA","FCF","TLB","Revolver"])
+    st.dataframe(lbo)
+
+    # =========================================
+    # EXIT
+    # =========================================
+    exit_ebitda=lbo.iloc[-1]["EBITDA"]
+    exit_ev=exit_ebitda*exit_multiple
+    exit_equity=exit_ev-(tlb+revolver)+cash_lbo
+
+    moic=exit_equity/equity
+    irr=moic**(1/years)-1
+
+    st.header("Returns")
+    st.metric("MOIC",f"{moic:.2f}x")
+    st.metric("IRR",f"{irr*100:.1f}%")
+
+    # =========================================
+    # SENSITIVITY
+    # =========================================
+    st.header("Sensitivity")
+
+    mults=np.arange(exit_multiple-2,exit_multiple+2,1)
+    res=[]
+    for m in mults:
+        exit_ev=exit_ebitda*m
+        eq=exit_ev-(tlb+revolver)
+        mo=eq/equity
+        ir=mo**(1/years)-1
+        res.append([m,round(ir*100,1)])
+    st.dataframe(pd.DataFrame(res,columns=["Exit Multiple","IRR"]))
