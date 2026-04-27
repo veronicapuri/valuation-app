@@ -39,6 +39,11 @@ def save_memory(mem):
 # =========================================
 # CLEANING
 # =========================================
+for col in numeric_cols:
+    if isinstance(df[col], pd.DataFrame):
+        st.error(f"🚨 Column '{col}' is duplicated → fixing")
+        df = dedupe_columns(df)
+        
 def clean(df):
     df.columns = df.iloc[0]
     return df[1:].reset_index(drop=True)
@@ -55,29 +60,25 @@ def dedupe_columns(df):
     
 def standardize(df):
     df = df.copy()
-
-    # Ensure string columns
     df.columns = [str(c).strip() for c in df.columns]
 
-    # First column = line item
     line_col = df.columns[0]
-
-    # Find numeric columns
     numeric_cols = df.columns[1:]
 
-    # Try convert all numeric columns
+    # CLEAN NUMERIC COLUMNS SAFELY
     for col in numeric_cols:
+        df[col] = df[col].astype(str)
+
         df[col] = (
             df[col]
-            .astype(str)
-            .str.replace(",", "")
-            .str.replace("(", "-")
-            .str.replace(")", "")
+            .str.replace(",", "", regex=False)
+            .str.replace("(", "-", regex=False)
+            .str.replace(")", "", regex=False)
         )
 
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Pick the BEST column (latest year or most filled)
+    # PICK BEST COLUMN
     best_col = max(numeric_cols, key=lambda c: df[c].abs().sum())
 
     return pd.DataFrame({
