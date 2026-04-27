@@ -35,63 +35,6 @@ def standardize(df):
     return df.rename(columns={df.columns[0]:"Line Item", df.columns[1]:"Amount"})
 
 # =========================================
-# CLASSIFICATION (HYBRID)
-# =========================================
-def is_noise(item):
-    text = str(item).lower()
-
-    # meta / titles
-    if any(x in text for x in [
-        "pte ltd", "for the year", "as at", "account", "unaudited"
-    ]):
-        return True
-
-    # totals / summaries
-    if any(x in text for x in [
-        "total", "net profit", "profit for the year",
-        "comprehensive income", "gross profit"
-    ]):
-        return True
-
-    return False
-
-SCHEMA = {
-    "Revenue":["revenue","sales"],
-    "COGS":["cost","materials"],
-    "OpEx":["salary","rent","expense","admin","marketing","office"],
-    "D&A":["depreciation","amortization"],
-    "Other Income":["interest income","grant"],
-    "Below EBITDA":["tax","interest expense"]
-}
-
-def score_classify(x):
-    x=str(x).lower()
-    scores={k:0 for k in SCHEMA}
-    for k,words in SCHEMA.items():
-        for w in words:
-            if w in x:
-                scores[k]+=1
-    best=max(scores,key=scores.get)
-    return best if scores[best]>0 else "Other"
-
-def hybrid_classify(df):
-    df["Category"]=df["Line Item"].apply(score_classify)
-
-    unknown=df[df["Category"]=="Other"]["Line Item"].tolist()
-    if unknown:
-        try:
-            res=client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role":"user","content":f"Classify: {unknown}"}],
-                temperature=0
-            )
-        except:
-            pass
-    return df
-
-st.subheader("DEBUG CLASSIFICATION")
-st.dataframe(df[["Line Item","Row Type","Section","Category","Amount"]])
-# =========================================
 # METRICS
 # =========================================
 def compute(df):
@@ -133,6 +76,11 @@ if pl:
     df=standardize(clean(df))
     df["Amount"]=pd.to_numeric(df["Amount"],errors="coerce").fillna(0)
 
+    df = classify_financials(df)
+
+    # ✅ DEBUG HERE (correct)
+    st.subheader("DEBUG CLASSIFICATION")
+    st.dataframe(df[["Line Item","Row Type","Section","Category","Amount"]])
 # =========================
 # BULLETPROOF CLASSIFICATION
 # =========================
@@ -300,7 +248,7 @@ if bs:
     dfb["Amount"] = dfb["Amount"].fillna(0)
     
     # ---- DEBUG CHECK (VERY IMPORTANT) ----
-    st.write("BS preview:", dfb.head())
+    st.write("BS preview:", dfb.head(10))
     
     # ---- CLASSIFY ----
     cash = dfb[dfb["Line Item"].str.contains("cash|bank", case=False, na=False)]["Amount"].sum()
@@ -343,10 +291,8 @@ if bs:
     for i in range(years):
         rev = fdf.iloc[i]["Revenue"]
         ebitda_y = fdf.iloc[i]["EBITDA"]
-        if i == 0:
-            e = ebitda * (1 + growth)
-        else:
-            e = rev * margins[i]
+        rev *= (1 + growth)
+        e = rev * margins[i]
         interest=tlb*tlb_rate+revolver*rev_rate
         dna = rev * 0.03
         ebit = ebitda_y - dna
@@ -359,8 +305,17 @@ if bs:
         delta_nwc = (rev * 0.05) - (prev_rev * 0.05 if i > 0 else 0)
         
         capex = max(da, rev * 0.06)
+
+        if i == 0:
+            prev_rev = revenue
+        
+        delta_nwc = (rev - prev_rev) * 0.05
+        dna = rev * 0.03
+        capex = max(dna, rev * 0.05)
         
         fcf = ebitda_y - interest - tax - capex - delta_nwc
+        
+        prev_rev = rev
 
         da = ebitda_y * 0.1
         capex = max(da, rev * 0.04)
