@@ -39,10 +39,6 @@ def save_memory(mem):
 # =========================================
 # CLEANING
 # =========================================
-for col in numeric_cols:
-    if isinstance(df[col], pd.DataFrame):
-        st.error(f"🚨 Column '{col}' is duplicated → fixing")
-        df = dedupe_columns(df)
         
 def clean(df):
     df.columns = df.iloc[0]
