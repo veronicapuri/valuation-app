@@ -484,7 +484,7 @@ def run_lbo(metrics, bs, params):
 # =========================================
 # RUN LBO (SAFE)
 # =========================================
-if pl_metrics["EBITDA"] > 0:
+if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
 
     bs_data = {
         "cash": cash_bs,
