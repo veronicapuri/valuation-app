@@ -176,7 +176,10 @@ if pl:
     f=[]
     for i in range(years):
         rev*=1+growth
-        e=rev*margins[i]
+        if i == 0:
+            e = ebitda * (1 + growth)
+        else:
+            e = rev * margins[i]
         f.append([i+1,rev,e])
     fdf=pd.DataFrame(f,columns=["Year","Revenue","EBITDA"])
     st.dataframe(fdf)
@@ -187,10 +190,14 @@ if pl:
     st.header("LBO")
 
     entry_ev=ebitda*entry_multiple
-    tlb=entry_ev*0.5
-    revolver=entry_ev*0.1
-    equity=entry_ev-(tlb+revolver)
-
+    debt_pct = 0.6  # make this a slider later
+    entry_debt = entry_ev * debt_pct
+    
+    tlb = entry_debt * 0.85
+    revolver = entry_debt * 0.15
+    
+    equity = entry_ev - entry_debt
+    
     cash_lbo=min_cash
 
     rows=[]
@@ -200,13 +207,22 @@ if pl:
 
         rev*=1+growth
         ebitda_y=rev*margins[i]
-
+        if i == 0:
+            e = ebitda * (1 + growth)
+        else:
+            e = rev * margins[i]
         interest=tlb*tlb_rate+revolver*rev_rate
-        tax=max(0,(ebitda_y-interest))*0.25
-        ni=ebitda_y-interest-tax
+        dna = rev * 0.03
+        ebit = ebitda_y - dna
+        tax = max(0, ebit - interest) * 0.25
+        ni = ebit - interest - tax
 
         capex=rev*0.05
         fcf=ni-capex
+        dna = rev * 0.03
+        delta_nwc = (rev - prev_rev) * 0.02
+        fcf = ni + dna - capex - delta_nwc
+        prev_rev = rev
 
         # cash
         cash_lbo+=fcf
@@ -239,8 +255,7 @@ if pl:
     # =========================================
     exit_ebitda=lbo.iloc[-1]["EBITDA"]
     exit_ev=exit_ebitda*exit_multiple
-    exit_equity=exit_ev-(tlb+revolver)+cash_lbo
-
+    exit_equity = exit_ev - (tlb + revolver) + cash_lbo
     moic=exit_equity/equity
     irr=moic**(1/years)-1
 
