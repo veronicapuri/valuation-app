@@ -95,16 +95,33 @@ def load_file(file):
 # ============================
 
 def detect_row_type(item):
+    import re
+
     text = str(item).strip().lower()
 
-    if text == "" or text in ["nan"]:
+    # Empty
+    if text == "" or text in ["nan", "none"]:
         return "Empty"
 
+    # 🚨 NEW: Metadata detection (CRITICAL)
+    if any(x in text for x in [
+        "year ended", "as at", "for the period",
+        "financial year", "company", "pte", "ltd",
+        "note", "account"
+    ]):
+        return "Meta"
+
+    # 🚨 NEW: standalone years
+    if re.fullmatch(r"\d{4}", text):
+        return "Meta"
+
+    # Totals
     if any(x in text for x in [
         "total", "subtotal", "net profit", "gross profit"
     ]):
         return "Total"
 
+    # Headers
     if any(x in text for x in [
         "income", "expenses", "assets", "liabilities"
     ]) and len(text.split()) <= 3:
@@ -118,15 +135,18 @@ def detect_sections(df):
 
     for item in df["Line Item"]:
         text = str(item).lower()
-
-        if "revenue" in text or "income" in text:
+        if "revenue" in text or "sales" in text:
             current = "Revenue Section"
+        
         elif "cost of sales" in text or "cogs" in text:
             current = "COGS Section"
+        
         elif "operating expense" in text or "expenses" in text:
             current = "OpEx Section"
+        
         elif "other income" in text:
             current = "Other Income Section"
+        
         elif "profit" in text:
             current = "Summary"
 
@@ -149,7 +169,8 @@ def smart_classify(df):
 
         # -------- SECTION LOGIC (PRIMARY DRIVER) --------
         if section == "Revenue Section":
-            return "Revenue"
+            if any(x in item for x in ["revenue", "sales"]):
+                return "Revenue"
 
         if section == "COGS Section":
             return "COGS"
@@ -320,6 +341,7 @@ if pl_file:
     df = standardize(df, lc, ac)
     
     df["Row Type"] = df["Line Item"].apply(detect_row_type)
+    df = df[~df["Row Type"].isin(["Meta", "Empty"])]
     
     df = detect_sections(df)
     df = smart_classify(df)
