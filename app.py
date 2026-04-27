@@ -89,6 +89,8 @@ def hybrid_classify(df):
             pass
     return df
 
+st.subheader("DEBUG CLASSIFICATION")
+st.dataframe(df[["Line Item","Row Type","Section","Category","Amount"]])
 # =========================================
 # METRICS
 # =========================================
@@ -251,6 +253,11 @@ df = classify_financials(df)
     # memory
     mem=load_memory()
     df["Category"]=df.apply(lambda x:mem.get(x["Line Item"],x["Category"]),axis=1)
+    df["Category"] = df.apply(
+        lambda x: mem.get(x["Line Item"], x["Category"]) if x["Category"] == "Other" else x["Category"],
+        axis=1
+    )
+
 
     # manual override
     df=st.data_editor(df)
