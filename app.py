@@ -404,7 +404,15 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
 # =========================================
 # LBO ENGINE
 # =========================================
-def run_lbo(metrics, bs, params):
+bs_data = {
+    "cash": cash_bs,
+    "debt": debt_bs,
+    "receivables": receivables_bs,
+    "inventory": inventory_bs,
+    "payables": payables_bs
+}
+
+lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
 
     cash_bs = bs.get("cash", 0)
     debt_bs = bs.get("debt", 0)
@@ -751,15 +759,15 @@ if pl_metrics:
         st.error("⚠️ EBITDA is zero or negative. LBO model cannot run. "
                  "Check that Revenue and COGS/OpEx rows are classified correctly.")
     else:
-        lbo_df, returns = run_lbo(
-            pl_metrics,
-            cash_bs,
-            debt_bs,
-            receivables_bs,
-            inventory_bs,
-            payables_bs,
-            params
-        )
+        bs_data = {
+            "cash": cash_bs,
+            "debt": debt_bs,
+            "receivables": receivables_bs,
+            "inventory": inventory_bs,
+            "payables": payables_bs
+        }
+        
+        lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
  
         # Returns headline
         st.subheader("📈 Returns Summary")
