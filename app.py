@@ -257,55 +257,54 @@ df["Category"] = df.apply(
     axis=1
 )
 
+# manual override
+df=st.data_editor(df)
+save_memory({r["Line Item"]:r["Category"] for _,r in df.iterrows()})
 
-    # manual override
-    df=st.data_editor(df)
-    save_memory({r["Line Item"]:r["Category"] for _,r in df.iterrows()})
+# compute
+revenue,cogs,opex,other,ebitda,margin=compute(df)
 
-    # compute
-    revenue,cogs,opex,other,ebitda,margin=compute(df)
+st.header("Snapshot")
+st.write(revenue,ebitda,margin)
 
-    st.header("Snapshot")
-    st.write(revenue,ebitda,margin)
+# =========================================
+# BALANCE SHEET
+# =========================================
+cash=0
+debt=0
 
-    # =========================================
-    # BALANCE SHEET
-    # =========================================
-    cash=0
-    debt=0
-
-    if bs:
-        dfb = pd.read_excel(bs, header=None)
+if bs:
+dfb = pd.read_excel(bs, header=None)
     
-        # ---- CLEAN HEADER SAFELY ----
-        dfb.columns = dfb.iloc[0].astype(str)
-        dfb = dfb[1:].reset_index(drop=True)
+    # ---- CLEAN HEADER SAFELY ----
+    dfb.columns = dfb.iloc[0].astype(str)
+    dfb = dfb[1:].reset_index(drop=True)
     
-        # Ensure columns exist
-        dfb.columns = [str(c).strip() for c in dfb.columns]
+    # Ensure columns exist
+    dfb.columns = [str(c).strip() for c in dfb.columns]
     
-        # ---- FORCE FIRST 2 COLUMNS ----
-        dfb = dfb.iloc[:, :2]
-        dfb.columns = ["Line Item", "Amount"]
+    # ---- FORCE FIRST 2 COLUMNS ----
+    dfb = dfb.iloc[:, :2]
+    dfb.columns = ["Line Item", "Amount"]
     
-        # ---- SAFE CONVERSION ----
-        dfb["Amount"] = (
-            dfb["Amount"]
-            .astype(str)
-            .str.replace(",", "")
-            .str.replace("(", "-")
-            .str.replace(")", "")
-        )
+    # ---- SAFE CONVERSION ----
+    dfb["Amount"] = (
+    dfb["Amount"]
+    .astype(str)
+    .str.replace(",", "")
+    .str.replace("(", "-")
+    .str.replace(")", "")
+    )
     
-        dfb["Amount"] = pd.to_numeric(dfb["Amount"], errors="coerce")
-        dfb["Amount"] = dfb["Amount"].fillna(0)
+    dfb["Amount"] = pd.to_numeric(dfb["Amount"], errors="coerce")
+    dfb["Amount"] = dfb["Amount"].fillna(0)
     
-        # ---- DEBUG CHECK (VERY IMPORTANT) ----
-        st.write("BS preview:", dfb.head())
+    # ---- DEBUG CHECK (VERY IMPORTANT) ----
+    st.write("BS preview:", dfb.head())
     
-        # ---- CLASSIFY ----
-        cash = dfb[dfb["Line Item"].str.contains("cash|bank", case=False, na=False)]["Amount"].sum()
-        debt = dfb[dfb["Line Item"].str.contains("loan|debt|borrow", case=False, na=False)]["Amount"].sum()
+    # ---- CLASSIFY ----
+    cash = dfb[dfb["Line Item"].str.contains("cash|bank", case=False, na=False)]["Amount"].sum()
+    debt = dfb[dfb["Line Item"].str.contains("loan|debt|borrow", case=False, na=False)]["Amount"].sum()
     # =========================================
     # FORECAST
     # =========================================
