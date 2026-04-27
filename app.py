@@ -257,12 +257,17 @@ if bs:
     # =========================================
     # CLASSIFICATION
     # =========================================
-    dfb["Category"] = dfb["Line Item"].str.lower().apply(lambda x:
-        "Cash" if "cash" in x or "bank" in x else
-        "Debt" if "loan" in x or "debt" in x or "borrow" in x else
-        "Other"
-    )
+    line = dfb["Line Item"].fillna("").astype(str).str.lower()
 
+    dfb["Category"] = np.select(
+        [
+            line.str.contains("cash|bank"),
+            line.str.contains("loan|debt|borrow")
+        ],
+        ["Cash", "Debt"],
+        default="Other"
+    )
+    
     cash = dfb[dfb["Category"] == "Cash"]["Amount"].sum()
     debt = dfb[dfb["Category"] == "Debt"]["Amount"].sum()
 
