@@ -121,9 +121,9 @@ def detect_row_type(item):
 
     return "Line"
 
-df["Row Type"] = df["Line Item"].apply(detect_row_type)
+    df["Row Type"] = df["Line Item"].apply(detect_row_type)
 
-st.write("Row Type distribution:", df["Row Type"].value_counts())
+    st.write("Row Type distribution:", df["Row Type"].value_counts())
     
 def detect_sections(df):
     sections = []
