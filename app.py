@@ -274,7 +274,7 @@ cash=0
 debt=0
 
 if bs:
-dfb = pd.read_excel(bs, header=None)
+    dfb = pd.read_excel(bs, header=None)
     
     # ---- CLEAN HEADER SAFELY ----
     dfb.columns = dfb.iloc[0].astype(str)
