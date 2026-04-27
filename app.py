@@ -801,7 +801,7 @@ if pl_metrics:
             row = {"Entry \\ Exit": f"{em:.1f}x"}
             for xm in exit_range:
                 p2 = {**params, "entry_multiple": em, "exit_multiple": xm}
-                _, ret2 = run_lbo(pl_metrics, cash_bs, debt_bs, p2)
+                _, ret2 = run_lbo(pl_metrics, bs_data, p2)
                 row[f"Exit {xm:.1f}x"] = f"{ret2['MOIC']:.2f}x"
             rows_sens.append(row)
  
@@ -820,7 +820,7 @@ if pl_metrics:
         with st.expander("🏗️ Valuation Bridge"):
             bridge = pd.DataFrame([
                 {"Item": "Entry EV",               "Value": fmt(returns["Entry EV"])},
-                {"Item": "  (-) Total Debt",        "Value": fmt(returns["Total Debt"])},
+                {"Item": "  (-) Total Debt",        "Value": fmt(returns["Debt"])},
                 {"Item": "  (+) Balance Sheet Cash","Value": fmt(cash_bs)},
                 {"Item": "  (-) Balance Sheet Debt","Value": fmt(debt_bs)},
                 {"Item": "Equity Invested",         "Value": fmt(returns["Equity In"])},
