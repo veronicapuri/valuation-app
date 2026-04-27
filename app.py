@@ -290,6 +290,7 @@ def compute_metrics(df):
 
     return revenue, cogs, opex, other_income, ebitda, margin
 
+df = auto_reclassify(df)
 def auto_reclassify(df):
     df = df.copy()
 
@@ -375,8 +376,6 @@ def reconcile(df, totals):
 
         if totals["Revenue"] != 0 and diff > 0.05 * abs(totals["Revenue"]):
             st.error("🚨 Revenue mismatch — classification likely wrong")
-
-
 # ============================
 # CONFIDENCE SCORE (UPGRADED)
 # ============================
@@ -388,8 +387,6 @@ def classification_confidence(df):
     structure_bonus = 0.1 if "Section" in df.columns else 0
 
     return min(1.0, (mapped / total) + structure_bonus)
-
-
 # ============================
 # AUTO FIX (SELF HEALING)
 # ============================
