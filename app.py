@@ -267,7 +267,7 @@ def keyword_classify_pl(item: str) -> str:
             return "Ignore"
  
     # Then check in priority order
-    for cat in ["Tax", "D&A", "Interest", "Other Income", "Revenue", "COGS", "OpEx"]:
+    for cat in ["Tax", "D&A", "Other Income", "Interest", "Revenue", "COGS", "OpEx"]:
         if any(kw in x for kw in PL_KEYWORDS[cat]):
             return cat
  
@@ -417,8 +417,10 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict) -> tupl
         interest = tlb * params["tlb_rate"] + revolver * params["rev_rate"]
         ebt      = ebit - interest
         tax      = max(0.0, ebt * params["tax_rate"])
- 
-        delta_nwc = (rev - prev_rev) * params["nwc_pct"]
+
+
+        nwc = receivables + inventory - payables
+        delta_nwc = nwc - prev_nwc
         capex     = rev * params["capex_pct"]
         fcf       = ebitda_y - interest - tax - capex - delta_nwc
  
@@ -619,7 +621,11 @@ if pl_file:
         )
  
         # Persist corrections to memory
-        save_memory({r["Line Item"]: r["Category"] for _, r in df_pl.iterrows()})
+        mem = load_memory()
+        for _, r in df_pl.iterrows():
+            if r["Category"] != "Unknown":
+                mem[r["Line Item"]] = r["Category"]
+        save_memory(mem)
  
         active_pl = df_pl[~df_pl["Category"].isin(["Ignore", "Unknown"])]
         pl_metrics = compute_pl(active_pl)
