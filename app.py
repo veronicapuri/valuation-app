@@ -216,6 +216,15 @@ if pl:
         tax = max(0, ebit - interest) * 0.25
         ni = ebit - interest - tax
 
+
+        da = ebitda_y * 0.1
+        
+        delta_nwc = (rev * 0.05) - (prev_rev * 0.05 if i > 0 else 0)
+        
+        capex = max(da, rev * 0.06)
+        
+        fcf = ebitda_y - interest - tax - capex - delta_nwc
+
         da = ebitda_y * 0.1
         capex = max(da, rev * 0.04)
         fcf=ni-capex
