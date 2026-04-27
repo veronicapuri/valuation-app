@@ -201,13 +201,13 @@ def clean_bs(df):
 
     # 🔥 STEP 1: FORCE UNIQUE COLUMNS
     def dedupe_columns(df):
-    cols = pd.Series(df.columns)
-    for dup in cols[cols.duplicated()].unique():
-        idxs = cols[cols == dup].index
-        for i, idx in enumerate(idxs):
-            cols[idx] = f"{dup}_{i}" if i > 0 else dup
-    df.columns = cols
-    return df
+        cols = pd.Series(df.columns)
+        for dup in cols[cols.duplicated()].unique():
+            idxs = cols[cols == dup].index
+            for i, idx in enumerate(idxs):
+                cols[idx] = f"{dup}_{i}" if i > 0 else dup
+        df.columns = cols
+        return df
 
     # 🔥 STEP 2: convert all to string
     df = df.astype(str)
