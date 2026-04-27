@@ -37,50 +37,66 @@ def save_memory(mem):
     json.dump(mem, open(MEMORY_FILE, "w"))
 
 # =========================================
-# CLEANING
+# SAFE INGESTION (BULLETPROOF)
 # =========================================
-        
-def clean(df):
-    df.columns = df.iloc[0]
-    return df[1:].reset_index(drop=True)
 
 def dedupe_columns(df):
     cols = pd.Series(df.columns)
     for dup in cols[cols.duplicated()].unique():
-        cols[cols[cols == dup].index] = [
-            f"{dup}_{i}" if i != 0 else dup
-            for i in range(sum(cols == dup))
-        ]
+        idxs = cols[cols == dup].index
+        for i, idx in enumerate(idxs):
+            cols[idx] = f"{dup}_{i}" if i > 0 else dup
     df.columns = cols
     return df
-    
+
+
+def clean(df):
+    # Use first row as header
+    df.columns = df.iloc[0].astype(str)
+    df = df[1:].reset_index(drop=True)
+
+    # Drop fully empty rows
+    df = df.dropna(how="all")
+
+    return df
+
+
 def standardize(df):
-    df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
+    # Always take first 2 columns ONLY
+    df = df.iloc[:, :2]
 
-    line_col = df.columns[0]
-    numeric_cols = df.columns[1:]
+    df.columns = ["Line Item", "Amount"]
 
-    # CLEAN NUMERIC COLUMNS SAFELY
-    for col in numeric_cols:
-        df[col] = df[col].astype(str)
+    # Convert to string safely
+    df["Line Item"] = df["Line Item"].astype(str)
 
-        df[col] = (
-            df[col]
-            .str.replace(",", "", regex=False)
-            .str.replace("(", "-", regex=False)
-            .str.replace(")", "", regex=False)
-        )
+    df["Amount"] = (
+        df["Amount"]
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("(", "-", regex=False)
+        .str.replace(")", "", regex=False)
+        .str.strip()
+    )
 
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
 
-    # PICK BEST COLUMN
-    best_col = max(numeric_cols, key=lambda c: df[c].abs().sum())
+    return df
 
-    return pd.DataFrame({
-        "Line Item": df[line_col],
-        "Amount": df[best_col]
-    })
+
+# =========================================
+# APPLY PIPELINE (ORDER MATTERS)
+# =========================================
+
+if pl:
+    df = pd.read_excel(pl, header=None)
+
+    df = clean(df)
+    df = dedupe_columns(df)     # 🔥 CRITICAL — DO NOT REMOVE
+    df = standardize(df)
+
+    st.subheader("Cleaned P&L Preview")
+    st.dataframe(df.head(20))
 
     if not isinstance(df["Amount"], pd.Series):
         st.error("🚨 Amount column is not valid — check input format")
