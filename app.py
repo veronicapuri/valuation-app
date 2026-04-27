@@ -220,9 +220,10 @@ if pl:
         capex=rev*0.05
         fcf=ni-capex
         dna = rev * 0.03
+        prev_rev = rev
         delta_nwc = (rev - prev_rev) * 0.02
         fcf = ni + dna - capex - delta_nwc
-        prev_rev = rev
+        
 
         # cash
         cash_lbo+=fcf
