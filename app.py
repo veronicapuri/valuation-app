@@ -96,38 +96,33 @@ def load_file(file):
 
 def detect_row_type(item):
     import re
-
-    text = str(item).strip().lower()
-
-    # Empty
-    if text == "" or text in ["nan", "none"]:
-        return "Empty"
-
-    # 🚨 NEW: Metadata detection (CRITICAL)
-    if any(x in text for x in [
-        "year ended", "as at", "for the period",
-        "financial year", "company", "pte", "ltd",
-        "note", "account"
-    ]):
-        return "Meta"
-
-    # 🚨 NEW: standalone years
-    if re.fullmatch(r"\d{4}", text):
-        return "Meta"
-
-    # Totals
-    if any(x in text for x in [
-        "total", "subtotal", "net profit", "gross profit"
-    ]):
-        return "Total"
-
-    # Headers
-    if any(x in text for x in [
-        "income", "expenses", "assets", "liabilities"
-    ]) and len(text.split()) <= 3:
-        return "Header"
-
-    return "Line"
+    
+    def detect_row_type(item):
+        text = str(item).strip().lower()
+    
+        if text == "" or text in ["nan", "none"]:
+            return "Empty"
+    
+        # ONLY true headers / metadata
+        if (
+            "year ended" in text or
+            "as at" in text or
+            re.fullmatch(r"\d{4}", text) or
+            text.startswith("note ")
+        ):
+            return "Meta"
+    
+        if any(x in text for x in [
+            "total", "subtotal", "net profit", "gross profit"
+        ]):
+            return "Total"
+    
+        if any(x in text for x in [
+            "income", "expenses"
+        ]) and len(text.split()) <= 3:
+            return "Header"
+    
+        return "Line"
     
 def detect_sections(df):
     sections = []
@@ -202,9 +197,21 @@ def smart_classify(df):
         
         # 4. OpEx (AFTER COGS)
         if any(x in item for x in [
-            "salary","wage","rent","expense","admin","marketing",
-            "utilities","insurance","travel","professional",
-            "subscription","fee","bank"
+            "salary","wage","bonus","cpf","staff",
+            "rent","lease",
+            "admin","administrative",
+            "marketing","advertising","promotion",
+            "utilities","electricity","water",
+            "insurance",
+            "travel","transport","logistics",
+            "professional","legal","audit","accounting",
+            "consulting",
+            "subscription","software","it",
+            "bank","charges","fees",
+            "maintenance","repair",
+            "office","supplies",
+            "telephone","internet",
+            "depreciation","amortization"
         ]):
             return "OpEx"
         
