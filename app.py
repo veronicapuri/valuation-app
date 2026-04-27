@@ -602,13 +602,13 @@ def run_lbo(metrics: dict, bs: dict, params: dict) -> tuple[pd.DataFrame, dict]:
  
     return lbo_df, returns
  
- bs_data = {
-    "cash": cash_bs,
-    "debt": debt_bs,
-    "receivables": receivables_bs,
-    "inventory": inventory_bs,
-    "payables": payables_bs
-}
+    bs_data = {
+        "cash": cash_bs,
+        "debt": debt_bs,
+        "receivables": receivables_bs,
+        "inventory": inventory_bs,
+        "payables": payables_bs
+    }
 
 lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
 # =========================================
