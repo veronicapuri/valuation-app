@@ -537,15 +537,17 @@ def run_lbo(metrics: dict, bs: dict, params: dict) -> tuple[pd.DataFrame, dict]:
 
     return lbo_df, returns
 
-bs_data = {
-    "cash": cash_bs,
-    "debt": debt_bs,
-    "receivables": receivables_bs,
-    "inventory": inventory_bs,
-    "payables": payables_bs
-}
+if ebitda > 0:
 
-lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
+    bs_data = {
+        "cash": cash_bs,
+        "debt": debt_bs,
+        "receivables": receivables_bs,
+        "inventory": inventory_bs,
+        "payables": payables_bs
+    }
+
+    lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
 
 # =========================================
 # FORMATTING HELPERS
@@ -701,6 +703,9 @@ if pl_file:
 # =========================================
 cash_bs = 0.0
 debt_bs = 0.0
+receivables_bs = 0.0
+inventory_bs = 0.0
+payables_bs = 0.0
  
 if bs_file:
     raw_bs = read_any_file(bs_file)
