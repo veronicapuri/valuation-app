@@ -201,15 +201,15 @@ def clean_bs(df):
 def standardize_bs(df):
     df = df.copy()
 
-    # Ensure unique column names first
-    df = dedupe_columns(df)
+    # 🔥 STEP 1: FORCE UNIQUE COLUMNS
+    df.columns = pd.io.parsers.ParserBase({'names': df.columns})._maybe_dedup_names(df.columns)
 
-    # Convert everything to string safely
-    for col in df.columns:
-        df[col] = df[col].astype(str)
+    # 🔥 STEP 2: convert all to string
+    df = df.astype(str)
 
-    # Detect numeric column
-    numeric_counts = {}
+    # 🔥 STEP 3: detect numeric column
+    best_col = None
+    best_score = -1
 
     for col in df.columns:
         cleaned = (
@@ -218,34 +218,38 @@ def standardize_bs(df):
             .str.replace("(", "-", regex=False)
             .str.replace(")", "", regex=False)
         )
-        numeric_counts[col] = pd.to_numeric(cleaned, errors="coerce").notna().sum()
 
-    amount_col = max(numeric_counts, key=numeric_counts.get)
+        score = pd.to_numeric(cleaned, errors="coerce").notna().sum()
+
+        if score > best_score:
+            best_score = score
+            best_col = col
+
     line_col = df.columns[0]
 
-    # 🔥 FORCE Series (THIS FIXES YOUR ERROR)
-    df = df[[line_col, amount_col]].copy()
+    # 🔥 STEP 4: FORCE SERIES EXTRACTION (CRITICAL FIX)
+    line_series = df[line_col].astype(str)
+    amount_series = df[best_col].astype(str)
 
-    df.columns = ["Line Item", "Amount"]
+    df_clean = pd.DataFrame({
+        "Line Item": line_series,
+        "Amount": amount_series
+    })
 
-    # Ensure Amount is a Series, not DataFrame
-    df["Amount"] = df["Amount"].astype(str)
-
-    df["Amount"] = (
-        df["Amount"]
+    # 🔥 STEP 5: CLEAN NUMBERS
+    df_clean["Amount"] = (
+        df_clean["Amount"]
         .str.replace(",", "", regex=False)
         .str.replace("(", "-", regex=False)
         .str.replace(")", "", regex=False)
         .str.strip()
     )
 
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
+    df_clean["Amount"] = pd.to_numeric(df_clean["Amount"], errors="coerce")
 
-    return df
+    return df_clean
 
-    st.write("Detected BS columns:", dfb.columns.tolist())
-    st.write("Raw BS preview:", dfb.head(10))
-    st.write("Non-zero count:", (dfb["Amount"] != 0).sum())
+
 
 def classify_bs(df):
     df = df.copy()
@@ -297,36 +301,45 @@ def classify_bs(df):
 # APPLY BS PIPELINE
 # =========================================
 
+# =========================================
+# BALANCE SHEET (FIXED STRUCTURE)
+# =========================================
+
 cash = 0
 debt = 0
 
 if bs:
+    # 1. LOAD
     dfb = pd.read_excel(bs, header=None)
 
-    dfb = clean_bs(dfb)
-    dfb = dedupe_columns(dfb)        # 🔥 SAME FIX AS P&L
-    dfb = standardize_bs(dfb)
-    dfb = classify_bs(dfb)
+    # 2. CLEAN HEADER
+    dfb.columns = dfb.iloc[0].astype(str)
+    dfb = dfb[1:].reset_index(drop=True)
+    dfb = dfb.dropna(how="all")
 
-    st.subheader("BS Cleaned & Classified")
+    # 3. STANDARDIZE (THIS IS WHERE YOUR FUNCTION RUNS)
+    dfb = standardize_bs(dfb)
+
+    # 4. DEBUG (DO NOT REMOVE)
+    st.subheader("BS DEBUG")
+    st.write("Amount type:", type(dfb["Amount"]))
+    st.write("Non-zero values:", (dfb["Amount"] != 0).sum())
     st.dataframe(dfb.head(20))
 
-    # =========================================
-    # CORE EXTRACTIONS (used in LBO)
-    # =========================================
+    # 5. BASIC CLASSIFICATION
+    dfb["Category"] = dfb["Line Item"].str.lower().apply(lambda x:
+        "Cash" if "cash" in x or "bank" in x else
+        "Debt" if "loan" in x or "debt" in x or "borrow" in x else
+        "Other"
+    )
 
+    # 6. EXTRACT VALUES
     cash = dfb[dfb["Category"] == "Cash"]["Amount"].sum()
     debt = dfb[dfb["Category"] == "Debt"]["Amount"].sum()
 
-    ar = dfb[dfb["Category"] == "Accounts Receivable"]["Amount"].sum()
-    ap = dfb[dfb["Category"] == "Accounts Payable"]["Amount"].sum()
-    inv = dfb[dfb["Category"] == "Inventory"]["Amount"].sum()
-
-    nwc = ar + inv - ap
-
     st.write("Cash:", cash)
     st.write("Debt:", debt)
-    st.write("NWC:", nwc)
+
     
 # =========================================
 # UI
