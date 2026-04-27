@@ -610,7 +610,7 @@ def run_lbo(metrics: dict, bs: dict, params: dict) -> tuple[pd.DataFrame, dict]:
         "payables": payables_bs
     }
 
-lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
+    lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
 # =========================================
 # FORMATTING HELPERS
 # =========================================
