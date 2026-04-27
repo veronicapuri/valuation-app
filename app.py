@@ -250,9 +250,8 @@ def classify_financials(df):
 # APPLY
 df = classify_financials(df)
 
-    # memory
-    mem=load_memory()
-    df["Category"]=df.apply(lambda x:mem.get(x["Line Item"],x["Category"]),axis=1)
+        # memory
+        mem=load_memory()
     df["Category"] = df.apply(
         lambda x: mem.get(x["Line Item"], x["Category"]) if x["Category"] == "Other" else x["Category"],
         axis=1
