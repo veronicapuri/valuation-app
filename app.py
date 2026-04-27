@@ -133,7 +133,17 @@ def detect_row_type(item):
     df["Row Type"] = df["Line Item"].apply(detect_row_type)
 
     st.write("Row Type distribution:", df["Row Type"].value_counts())
-    
+
+rev, cogs, opex, other_income, ebitda, margin = compute_metrics(df)
+
+st.write("### 🧠 Model Diagnostics")
+st.write({
+    "Revenue": rev,
+    "COGS %": (cogs/rev if rev else 0),
+    "OpEx %": (opex/rev if rev else 0),
+    "EBITDA Margin": margin
+})
+
 def detect_sections(df):
     sections = []
     current = "Unknown"
@@ -257,7 +267,7 @@ def smart_classify(df):
             return "Below EBITDA"
         
         return "Other"
-                
+    
 
     df["Category"] = df.apply(rule, axis=1)
     return df
@@ -267,6 +277,70 @@ def smart_classify(df):
         if margin > 0.6:
             st.warning("🚨 EBITDA margin unusually high — classification likely missing costs")
 
+def compute_metrics(df):
+    clean_df = df[df["Category"] != "Ignore"]
+
+    revenue = clean_df[clean_df.Category == "Revenue"]["Amount"].sum()
+    cogs = clean_df[clean_df.Category == "COGS"]["Amount"].sum()
+    opex = clean_df[clean_df.Category == "OpEx"]["Amount"].sum()
+    other_income = clean_df[clean_df.Category == "Other Income"]["Amount"].sum()
+
+    ebitda = revenue - cogs - opex + other_income
+    margin = ebitda / revenue if revenue else 0
+
+    return revenue, cogs, opex, other_income, ebitda, margin
+
+def auto_reclassify(df):
+    df = df.copy()
+
+    for _ in range(3):  # iterate max 3 times
+        revenue, cogs, opex, other_income, ebitda, margin = compute_metrics(df)
+
+        # -------------------------
+        # 1. EBITDA TOO HIGH → missing costs
+        # -------------------------
+        if margin > 0.5:
+            # move "Other" into OpEx
+            df.loc[df["Category"] == "Other", "Category"] = "OpEx"
+
+            # move suspicious revenue into OpEx
+            df.loc[
+                (df["Category"] == "Revenue") &
+                (~df["Line Item"].str.contains("sales|revenue", case=False, na=False)),
+                "Category"
+            ] = "OpEx"
+
+        # -------------------------
+        # 2. EBITDA TOO LOW → costs misclassified
+        # -------------------------
+        if margin < 0:
+            df.loc[
+                (df["Category"] == "OpEx") &
+                (df["Line Item"].str.contains("income|grant|gain", case=False, na=False)),
+                "Category"
+            ] = "Other Income"
+
+        # -------------------------
+        # 3. COGS sanity check
+        # -------------------------
+        if revenue > 0:
+            cogs_ratio = cogs / revenue
+
+            # if COGS too high → move some to OpEx
+            if cogs_ratio > 0.8:
+                df.loc[
+                    (df["Category"] == "COGS") &
+                    (~df["Line Item"].str.contains("cost|materials|inventory", case=False, na=False)),
+                    "Category"
+                ] = "OpEx"
+
+        # -------------------------
+        # 4. Recompute after fixes
+        # -------------------------
+        revenue, cogs, opex, other_income, ebitda, margin = compute_metrics(df)
+
+    return df
+    
 # ============================
 # TOTALS DETECTION
 # ============================
