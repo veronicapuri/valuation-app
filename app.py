@@ -131,8 +131,122 @@ if pl:
     df=standardize(clean(df))
     df["Amount"]=pd.to_numeric(df["Amount"],errors="coerce").fillna(0)
 
-    # classify
-    df=hybrid_classify(df)
+# =========================
+# BULLETPROOF CLASSIFICATION
+# =========================
+
+def normalize_text(x):
+    if pd.isna(x):
+        return ""
+    return str(x).strip().lower()
+
+def detect_row_type(text):
+    text = normalize_text(text)
+
+    if text == "":
+        return "Empty"
+
+    if any(x in text for x in [
+        "pte ltd", "for the year", "as at", "account", "unaudited"
+    ]):
+        return "Meta"
+
+    if any(x in text for x in [
+        "total", "net profit", "profit for the year",
+        "comprehensive income", "gross profit"
+    ]):
+        return "Total"
+
+    if len(text.split()) <= 3 and any(x in text for x in [
+        "revenue","income","expenses","cost"
+    ]):
+        return "Header"
+
+    return "Line"
+
+
+def detect_sections(df):
+    current = "Unknown"
+    sections = []
+
+    for item in df["Line Item"]:
+        text = normalize_text(item)
+
+        if "revenue" in text or "trading income" in text:
+            current = "Revenue"
+
+        elif "cost of sales" in text or "cogs" in text:
+            current = "COGS"
+
+        elif "operating expenses" in text:
+            current = "OpEx"
+
+        elif "other income" in text:
+            current = "Other Income"
+
+        elif "tax" in text:
+            current = "Below EBITDA"
+
+        sections.append(current)
+
+    df["Section"] = sections
+    return df
+
+
+def classify_row(row):
+    if row["Row Type"] != "Line":
+        return "Ignore"
+
+    item = normalize_text(row["Line Item"])
+    section = row.get("Section", "Unknown")
+
+    if section == "Revenue":
+        return "Revenue"
+
+    if section == "COGS":
+        return "COGS"
+
+    if section == "OpEx":
+        if "depreciation" in item or "amortization" in item:
+            return "D&A"
+        return "OpEx"
+
+    if section == "Other Income":
+        return "Other Income"
+
+    if section == "Below EBITDA":
+        return "Below EBITDA"
+
+    # fallback
+    if any(x in item for x in ["sales","revenue"]):
+        return "Revenue"
+
+    if any(x in item for x in ["cost","materials","purchases"]):
+        return "COGS"
+
+    if any(x in item for x in ["salary","rent","admin","marketing","expense"]):
+        return "OpEx"
+
+    return "Other"
+
+
+def classify_financials(df):
+    df = df.copy()
+
+    df["Row Type"] = df["Line Item"].apply(detect_row_type)
+
+    # REMOVE garbage BEFORE classification
+    df = df[~df["Row Type"].isin(["Meta","Empty"])]
+
+    df = detect_sections(df)
+
+    df["Category"] = df.apply(classify_row, axis=1)
+
+    return df
+
+
+# APPLY
+df = classify_financials(df)
 
     # memory
     mem=load_memory()
