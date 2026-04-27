@@ -8,6 +8,20 @@ import json, os
 
 st.set_page_config(layout="wide")
 
+st.title("📊 SME Valuation & LBO Tool")
+
+st.markdown("---")
+
+st.header("📂 Data Ingestion")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    pl = st.file_uploader("Upload P&L", type=["xlsx","csv","pdf"])
+
+with col2:
+    bs = st.file_uploader("Upload Balance Sheet", type=["xlsx","csv","pdf"])
+    
 # =========================================
 # MEMORY
 # =========================================
@@ -139,9 +153,6 @@ min_cash = st.sidebar.number_input("Min Cash", 50000)
 # =========================================
 # FILE UPLOAD
 # =========================================
-pl = st.file_uploader("Upload P&L")
-bs = st.file_uploader("Upload BS")
-
 if pl:
     df = pd.read_excel(pl)
     df = standardize(clean(df))
