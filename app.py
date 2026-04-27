@@ -134,15 +134,15 @@ def detect_row_type(item):
 
     st.write("Row Type distribution:", df["Row Type"].value_counts())
 
-rev, cogs, opex, other_income, ebitda, margin = compute_metrics(df)
+    rev, cogs, opex, other_income, ebitda, margin = compute_metrics(df)
 
-st.write("### 🧠 Model Diagnostics")
-st.write({
-    "Revenue": rev,
-    "COGS %": (cogs/rev if rev else 0),
-    "OpEx %": (opex/rev if rev else 0),
-    "EBITDA Margin": margin
-})
+    st.write("### 🧠 Model Diagnostics")
+    st.write({
+        "Revenue": rev,
+        "COGS %": (cogs/rev if rev else 0),
+        "OpEx %": (opex/rev if rev else 0),
+        "EBITDA Margin": margin
+    })
 
 def detect_sections(df):
     sections = []
