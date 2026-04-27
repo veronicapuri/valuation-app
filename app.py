@@ -1,409 +1,650 @@
 # =========================================
-# IMPORTS
+# SME VALUATION & LBO TOOL v2.0
 # =========================================
+# Supports: xlsx, xls, csv, pdf
+# Features: AI-assisted classification, memory, full LBO model
+# =========================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import json, os
 
-st.set_page_config(layout="wide")
+try:
+    import pdfplumber
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
 
-st.title("📊 SME Valuation & LBO Tool")
-st.caption("AI-powered SME valuation, classification, and LBO modeling platform")
+st.set_page_config(layout="wide", page_title="SME Valuation Tool", page_icon="📊")
 
-st.markdown("---")
-
-st.header("📂 Data Ingestion")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    pl = st.file_uploader("Upload P&L", type=["xlsx","csv","pdf"])
-
-with col2:
-    bs = st.file_uploader("Upload Balance Sheet", type=["xlsx","csv","pdf"])
-    
 # =========================================
-# MEMORY
+# CONSTANTS
 # =========================================
 MEMORY_FILE = "memory.json"
 
-def load_memory():
+PL_CATEGORIES  = ["Revenue", "COGS", "OpEx", "D&A", "Other Income", "Interest", "Tax", "Ignore"]
+BS_CATEGORIES  = ["Cash", "Receivables", "Inventory", "Fixed Assets", "Debt", "Payables", "Equity", "Other"]
+
+PL_KEYWORDS = {
+    "Revenue":      ["revenue", "sales", "turnover", "income from operation", "service fee",
+                     "subscription", "service income", "contract revenue", "fee income"],
+    "COGS":         ["cost of", "cogs", "direct cost", "material", "purchase", "subcontract",
+                     "cost of revenue", "cost of sales"],
+    "OpEx":         ["salary", "salaries", "wage", "bonus", "rent", "rental", "utilities",
+                     "insurance", "admin", "general & admin", "selling", "marketing",
+                     "advertising", "travel", "professional fee", "consultancy", "audit",
+                     "legal", "office", "maintenance", "repair", "allowance", "staff cost",
+                     "manpower", "payroll"],
+    "D&A":          ["depreciation", "amortis", "amortiz", "d&a", "right-of-use"],
+    "Other Income": ["other income", "interest income", "dividend", "gain on disposal",
+                     "foreign exchange gain", "forex gain", "miscellaneous income"],
+    "Interest":     ["interest expense", "finance cost", "finance charge", "bank charge",
+                     "borrowing cost"],
+    "Tax":          ["income tax", "tax expense", "deferred tax", "zakat"],
+    "Ignore":       ["total", "net profit", "gross profit", "ebitda", "subtotal", "pte", "ltd",
+                     "sdn bhd", "for the year", "as at", "nan", "none", "operating profit",
+                     "profit before", "profit after", "loss before", "loss after"],
+}
+
+BS_KEYWORDS = {
+    "Cash":         ["cash", "bank balance", "cash and cash equivalent", "fixed deposit"],
+    "Receivables":  ["receivable", "debtor", "trade receivable", "other receivable",
+                     "prepayment", "deposit paid"],
+    "Inventory":    ["inventory", "stock", "work in progress", "wip"],
+    "Fixed Assets": ["property", "plant", "equipment", "ppe", "fixed asset", "right-of-use",
+                     "motor vehicle", "renovation", "machinery", "computer"],
+    "Debt":         ["loan", "debt", "borrowing", "credit facility", "term loan",
+                     "revolving", "bank overdraft", "hire purchase", "lease liabilit"],
+    "Payables":     ["payable", "creditor", "trade payable", "accrual", "other payable",
+                     "advance received", "deposit received"],
+    "Equity":       ["equity", "share capital", "retained earning", "reserve", "accumulated"],
+}
+
+
+# =========================================
+# MEMORY
+# =========================================
+def load_memory() -> dict:
     if os.path.exists(MEMORY_FILE):
-        return json.load(open(MEMORY_FILE))
+        with open(MEMORY_FILE) as f:
+            return json.load(f)
     return {}
 
-def save_memory(mem):
-    json.dump(mem, open(MEMORY_FILE, "w"))
+def save_memory(mem: dict):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(mem, f, indent=2)
+
 
 # =========================================
-# SAFE INGESTION (BULLETPROOF)
+# UNIVERSAL FILE READER
 # =========================================
+def read_any_file(uploaded_file) -> pd.DataFrame | None:
+    """Read xlsx / xls / csv / pdf → raw DataFrame (no header assumed)."""
+    name = uploaded_file.name.lower()
 
-def dedupe_columns(df):
-    cols = pd.Series(df.columns)
+    if name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file, header=None, dtype=str)
+
+    elif name.endswith((".xlsx", ".xls")):
+        df = pd.read_excel(uploaded_file, header=None, dtype=str)
+
+    elif name.endswith(".pdf"):
+        if not PDF_SUPPORT:
+            st.error("📦 PDF support requires pdfplumber — run: pip install pdfplumber")
+            return None
+        tables = []
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                for tbl in page.extract_tables():
+                    if tbl:
+                        tables.append(pd.DataFrame(tbl, dtype=str))
+        if not tables:
+            st.error("No tables detected in the PDF. Try converting to xlsx first.")
+            return None
+        df = pd.concat(tables, ignore_index=True)
+    else:
+        st.error(f"Unsupported file type: {name}")
+        return None
+
+    return df
+
+
+# =========================================
+# CLEANING PIPELINE
+# =========================================
+def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    cols = pd.Series(df.columns.astype(str))
     for dup in cols[cols.duplicated()].unique():
-        idxs = cols[cols == dup].index
-        for i, idx in enumerate(idxs):
-            cols[idx] = f"{dup}_{i}" if i > 0 else dup
+        for i, idx in enumerate(cols[cols == dup].index):
+            if i > 0:
+                cols[idx] = f"{dup}_{i}"
     df.columns = cols
     return df
 
 
-def clean(df):
-    # Use first row as header
-    df.columns = df.iloc[0].astype(str)
-    df = df[1:].reset_index(drop=True)
-
-    # Drop fully empty rows
-    df = df.dropna(how="all")
-
-    return df
-
-
-def standardize(df):
-    # Always take first 2 columns ONLY
-    df = df.iloc[:, :2]
-
-    df.columns = ["Line Item", "Amount"]
-
-    # Convert to string safely
-    df["Line Item"] = df["Line Item"].astype(str)
-
-    df["Amount"] = (
-        df["Amount"]
-        .astype(str)
+def parse_amount(series: pd.Series) -> pd.Series:
+    return (
+        series.astype(str)
         .str.replace(",", "", regex=False)
-        .str.replace("(", "-", regex=False)
-        .str.replace(")", "", regex=False)
-        .str.strip()
+        .str.replace(r"\(([0-9.,]+)\)", r"-\1", regex=True)   # (1,234) → -1234
+        .str.replace(r"[^0-9.\-]", "", regex=True)
+        .pipe(lambda s: pd.to_numeric(s, errors="coerce"))
+        .fillna(0)
     )
 
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
 
-    return df
+def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Auto-detect the label column and the best numeric amount column.
+    Returns a two-column DataFrame: Line Item, Amount.
+    """
+    df = df.dropna(how="all").reset_index(drop=True)
+    df = df.astype(str).replace("None", np.nan).replace("nan", np.nan)
+    df = dedupe_columns(df)
 
-
-# =========================================
-# APPLY PIPELINE (ORDER MATTERS)
-# =========================================
-
-if pl:
-    df = pd.read_excel(pl, header=None)
-
-    df = clean(df)
-    df = dedupe_columns(df)     # 🔥 CRITICAL — DO NOT REMOVE
-    df = standardize(df)
-
-    st.subheader("Cleaned P&L Preview")
-    st.dataframe(df.head(20))
-
-    if not isinstance(df["Amount"], pd.Series):
-        st.error("🚨 Amount column is not valid — check input format")
-        st.stop()
-
-# =========================================
-# CLASSIFICATION ENGINE (BULLETPROOF)
-# =========================================
-def normalize(x):
-    return "" if pd.isna(x) else str(x).lower().strip()
-
-def detect_row_type(x):
-    x = normalize(x)
-
-    if x == "":
-        return "Empty"
-
-    if any(k in x for k in ["pte ltd", "for the year", "as at"]):
-        return "Meta"
-
-    if any(k in x for k in ["total", "net profit", "gross profit"]):
-        return "Total"
-
-    if len(x.split()) <= 3 and any(k in x for k in ["revenue", "income", "expense"]):
-        return "Header"
-
-    return "Line"
-
-def detect_sections(df):
-    current = "Unknown"
-    sections = []
-
-    for item in df["Line Item"]:
-        t = normalize(item)
-
-        if "revenue" in t:
-            current = "Revenue"
-        elif "cost" in t:
-            current = "COGS"
-        elif "expense" in t:
-            current = "OpEx"
-        elif "income" in t:
-            current = "Other Income"
-
-        sections.append(current)
-
-    df["Section"] = sections
-    return df
-
-def classify(df):
-    df["Row Type"] = df["Line Item"].apply(detect_row_type)
-    df = df[~df["Row Type"].isin(["Meta", "Empty"])]
-
-    df = detect_sections(df)
-
-    def rule(r):
-        if r["Row Type"] != "Line":
-            return "Ignore"
-
-        item = normalize(r["Line Item"])
-        sec = r["Section"]
-
-        if sec == "Revenue":
-            return "Revenue"
-        if sec == "COGS":
-            return "COGS"
-        if sec == "OpEx":
-            return "OpEx"
-
-        if "depreciation" in item:
-            return "D&A"
-
-        return "Other"
-
-    df["Category"] = df.apply(rule, axis=1)
-    return df
-
-# =========================================
-# METRICS
-# =========================================
-def compute(df):
-    r = df[df.Category == "Revenue"]["Amount"].sum()
-    c = df[df.Category == "COGS"]["Amount"].sum()
-    o = df[df.Category == "OpEx"]["Amount"].sum()
-    oi = df[df.Category == "Other Income"]["Amount"].sum()
-
-    ebitda = r - c - o + oi
-    margin = ebitda / r if r else 0
-
-    return r, c, o, oi, ebitda, margin
-
-# =========================================
-# BALANCE SHEET (FINAL CLEAN VERSION)
-# =========================================
-
-cash = 0
-debt = 0
-
-if bs:
-    dfb = pd.read_excel(bs, header=None)
-
-    # 🔥 DO NOT ASSUME HEADER — just clean blanks
-    dfb = dfb.dropna(how="all")
-
-    # 🔥 dedupe columns FIRST
-    dfb = dedupe_columns(dfb)
-
-    # 🔥 convert everything to string
-    dfb = dfb.astype(str)
-
-    # =========================================
-    # AUTO-DETECT AMOUNT COLUMN
-    # =========================================
-    best_col = None
-    best_score = -1
-
-    for col in dfb.columns:
-        cleaned = (
-            dfb[col]
-            .str.replace(",", "", regex=False)
-            .str.replace("(", "-", regex=False)
-            .str.replace(")", "", regex=False)
-        )
-
-        score = pd.to_numeric(cleaned, errors="coerce").notna().sum()
-
+    # ---- Auto-detect best numeric column ----
+    best_col, best_score = None, -1
+    for col in df.columns:
+        score = parse_amount(df[col]).astype(bool).sum()
         if score > best_score:
-            best_score = score
-            best_col = col
+            best_score, best_col = score, col
 
-    line_col = dfb.columns[0]
+    label_col = df.columns[0]   # first column is always the label
 
-    dfb = pd.DataFrame({
-        "Line Item": dfb[line_col],
-        "Amount": dfb[best_col]
+    result = pd.DataFrame({
+        "Line Item": df[label_col].fillna("").astype(str).str.strip(),
+        "Amount":    parse_amount(df[best_col]),
     })
 
-    # =========================================
-    # CLEAN NUMBERS
-    # =========================================
-    dfb["Amount"] = (
-        dfb["Amount"]
-        .str.replace(",", "", regex=False)
-        .str.replace("(", "-", regex=False)
-        .str.replace(")", "", regex=False)
-        .str.strip()
-    )
+    # Drop blank / purely numeric label rows
+    result = result[result["Line Item"].str.len() > 0]
+    result = result[~result["Line Item"].str.fullmatch(r"[\d\s.,\-()]+")]
+    result = result.reset_index(drop=True)
 
-    dfb["Amount"] = pd.to_numeric(dfb["Amount"], errors="coerce")
+    return result
 
-    # =========================================
-    # DEBUG (VERY IMPORTANT)
-    # =========================================
-    st.subheader("BS DEBUG")
-    st.write("Non-zero values:", dfb["Amount"].notna().sum())
-    st.dataframe(dfb.head(20))
-
-    # =========================================
-    # CLASSIFICATION
-    # =========================================
-    line = dfb["Line Item"].fillna("").astype(str).str.lower()
-
-    dfb["Category"] = np.select(
-        [
-            line.str.contains("cash|bank"),
-            line.str.contains("loan|debt|borrow")
-        ],
-        ["Cash", "Debt"],
-        default="Other"
-    )
-    
-    cash = dfb[dfb["Category"] == "Cash"]["Amount"].sum()
-    debt = dfb[dfb["Category"] == "Debt"]["Amount"].sum()
-
-    st.write("Cash:", cash)
-    st.write("Debt:", debt)
-    
-# =========================================
-# UI
-# =========================================
-st.sidebar.header("Deal")
-
-entry_multiple = st.sidebar.number_input("Entry Multiple", 4.0)
-exit_multiple = st.sidebar.number_input("Exit Multiple", 7.0)
-years = st.sidebar.slider("Holding Period", 1, 7, 5)
-
-growth = st.sidebar.slider("Revenue Growth %", 0, 30, 10) / 100
-
-st.sidebar.subheader("Margins")
-margins = [st.sidebar.slider(f"Y{i+1}", 0, 80, 20) / 100 for i in range(years)]
-
-st.sidebar.subheader("Capital Structure")
-tlb_rate = st.sidebar.slider("TLB Rate", 0, 15, 7) / 100
-rev_rate = st.sidebar.slider("Revolver Rate", 0, 15, 6) / 100
-min_cash = st.sidebar.number_input("Min Cash", 50000)
 
 # =========================================
-# FILE UPLOAD
+# CLASSIFICATION — P&L
 # =========================================
-if pl:
-    df = pd.read_excel(pl)
-    df = standardize(clean(df))
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+def keyword_classify_pl(item: str) -> str:
+    x = str(item).lower().strip()
+    if not x or x in ("nan", "none", ""):
+        return "Ignore"
+    for cat, keywords in PL_KEYWORDS.items():
+        if any(k in x for k in keywords):
+            return cat
+    return "Unknown"
 
-    # CLASSIFY
-    df = classify(df)
 
-    # MEMORY
+def ai_classify_pl(items: list[str], api_key: str) -> dict:
+    """Claude classifies a batch of unknown P&L line items."""
+    if not items:
+        return {}
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        prompt = (
+            "You are a financial analyst. Classify each P&L line item into exactly one of:\n"
+            "Revenue, COGS, OpEx, D&A, Other Income, Interest, Tax, Ignore\n\n"
+            "Return ONLY a JSON object {\"line item\": \"Category\"}. No markdown, no explanation.\n\n"
+            f"Items:\n{json.dumps(items)}"
+        )
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return json.loads(resp.content[0].text)
+    except Exception as e:
+        st.warning(f"AI classification failed: {e}")
+        return {}
+
+
+def classify_pl(df: pd.DataFrame, use_ai: bool, api_key: str) -> pd.DataFrame:
     mem = load_memory()
+    df["Category"] = df["Line Item"].apply(keyword_classify_pl)
+
+    # Apply saved memory
     df["Category"] = df.apply(
-        lambda x: mem.get(x["Line Item"], x["Category"]) if x["Category"] == "Other" else x["Category"],
-        axis=1
+        lambda r: mem.get(r["Line Item"], r["Category"]), axis=1
     )
 
-    # DEBUG
-    st.subheader("DEBUG CLASSIFICATION")
-    st.dataframe(df)
+    # AI for remaining unknowns
+    if use_ai and api_key:
+        unknowns = df[df["Category"] == "Unknown"]["Line Item"].tolist()
+        if unknowns:
+            ai_map = ai_classify_pl(unknowns, api_key)
+            df["Category"] = df.apply(
+                lambda r: ai_map.get(r["Line Item"], r["Category"])
+                if r["Category"] == "Unknown" else r["Category"],
+                axis=1,
+            )
 
-    # MANUAL FIX
-    df = st.data_editor(df)
-    save_memory({r["Line Item"]: r["Category"] for _, r in df.iterrows()})
+    return df
 
-    # METRICS
-    revenue, cogs, opex, other, ebitda, margin = compute(df)
 
-    st.header("Snapshot")
-    st.write(revenue, ebitda, margin)
+# =========================================
+# METRICS — P&L
+# =========================================
+def compute_pl(df: pd.DataFrame) -> dict:
+    def s(cat):
+        return df.loc[df["Category"] == cat, "Amount"].sum()
 
-    # =========================================
-    # FORECAST
-    # =========================================
-    st.header("Forecast")
+    rev   = s("Revenue")
+    cogs  = s("COGS")
+    opex  = s("OpEx")
+    da    = s("D&A")
+    oi    = s("Other Income")
+    int_  = s("Interest")
+    tax   = s("Tax")
 
-    rev = revenue
-    f = []
+    gp      = rev - cogs
+    ebitda  = gp - opex + oi
+    ebit    = ebitda - da
+    ebt     = ebit - int_
+    net     = ebt - tax
 
-    for i in range(years):
-        rev *= (1 + growth)
-        e = rev * margins[i]
-        f.append([i+1, rev, e])
+    def pct(n, d=rev):
+        return n / d if d else 0
 
-    fdf = pd.DataFrame(f, columns=["Year", "Revenue", "EBITDA"])
-    st.dataframe(fdf)
+    return {
+        "Revenue":        rev,
+        "COGS":           cogs,
+        "Gross Profit":   gp,
+        "GP Margin":      pct(gp),
+        "OpEx":           opex,
+        "D&A":            da,
+        "Other Income":   oi,
+        "EBITDA":         ebitda,
+        "EBITDA Margin":  pct(ebitda),
+        "EBIT":           ebit,
+        "EBIT Margin":    pct(ebit),
+        "Interest":       int_,
+        "EBT":            ebt,
+        "Tax":            tax,
+        "Net Profit":     net,
+        "Net Margin":     pct(net),
+    }
 
-    # =========================================
-    # LBO
-    # =========================================
-    st.header("LBO")
 
-    entry_ev = ebitda * entry_multiple
-    debt = entry_ev * 0.6
-    tlb = debt * 0.85
-    revolver = debt * 0.15
-    equity = entry_ev - debt
+# =========================================
+# CLASSIFICATION — BALANCE SHEET
+# =========================================
+def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
+    cats = []
+    for item in df["Line Item"].fillna("").astype(str).str.lower():
+        cat = "Other"
+        for c, keywords in BS_KEYWORDS.items():
+            if any(k in item for k in keywords):
+                cat = c
+                break
+        cats.append(cat)
+    df["Category"] = cats
+    return df
 
-    cash = min_cash
+
+# =========================================
+# LBO ENGINE
+# =========================================
+def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict) -> tuple[pd.DataFrame, dict]:
+    ebitda  = metrics["EBITDA"]
+    revenue = metrics["Revenue"]
+
+    entry_ev    = ebitda * params["entry_multiple"]
+    total_debt  = entry_ev * params["leverage_pct"]
+    tlb         = total_debt * 0.85
+    revolver    = total_debt * 0.15
+    equity_in   = entry_ev - total_debt + (debt_bs - cash_bs)  # adj for net debt on BS
+
+    cash = float(params["min_cash"])
     prev_rev = revenue
-
     rows = []
 
-    for i in range(years):
-        rev = fdf.iloc[i]["Revenue"]
-        ebitda_y = fdf.iloc[i]["EBITDA"]
+    for i in range(params["years"]):
+        rev      = revenue * (1 + params["growth"]) ** (i + 1)
+        ebitda_y = rev * params["margins"][i]
+        da_y     = rev * params["da_pct"]
+        ebit     = ebitda_y - da_y
 
-        interest = tlb * tlb_rate + revolver * rev_rate
-        tax = max(0, (ebitda_y - interest) * 0.25)
+        interest = tlb * params["tlb_rate"] + revolver * params["rev_rate"]
+        ebt      = ebit - interest
+        tax      = max(0.0, ebt * params["tax_rate"])
 
-        delta_nwc = (rev - prev_rev) * 0.05
-        capex = rev * 0.05
-
-        fcf = ebitda_y - interest - tax - capex - delta_nwc
+        delta_nwc = (rev - prev_rev) * params["nwc_pct"]
+        capex     = rev * params["capex_pct"]
+        fcf       = ebitda_y - interest - tax - capex - delta_nwc
 
         prev_rev = rev
+        cash    += fcf
 
-        cash += fcf
-
-        if cash < min_cash:
-            draw = min_cash - cash
+        # Draw revolver if cash dips below minimum
+        if cash < params["min_cash"]:
+            draw      = params["min_cash"] - cash
             revolver += draw
-            cash += draw
+            cash     += draw
 
-        excess = max(0, cash - min_cash)
-
-        pay_rev = min(revolver, excess)
+        # Paydown revolver first, then TLB
+        excess    = max(0.0, cash - params["min_cash"])
+        pay_rev   = min(revolver, excess)
         revolver -= pay_rev
-        cash -= pay_rev
+        cash     -= pay_rev
 
-        excess = max(0, cash - min_cash)
-        pay_tlb = min(tlb, excess)
-        tlb -= pay_tlb
-        cash -= pay_tlb
+        excess    = max(0.0, cash - params["min_cash"])
+        pay_tlb   = min(tlb, excess)
+        tlb      -= pay_tlb
+        cash     -= pay_tlb
 
-        rows.append([i+1, rev, ebitda_y, fcf, tlb, revolver])
+        rows.append({
+            "Year":          i + 1,
+            "Revenue":       rev,
+            "EBITDA":        ebitda_y,
+            "EBITDA Margin": ebitda_y / rev if rev else 0,
+            "Interest":      interest,
+            "Tax":           tax,
+            "CapEx":         capex,
+            "ΔNWC":          delta_nwc,
+            "FCF":           fcf,
+            "TLB":           tlb,
+            "Revolver":      revolver,
+            "Cash":          cash,
+            "Net Debt":      tlb + revolver - cash,
+        })
 
-    lbo = pd.DataFrame(rows, columns=["Year","Revenue","EBITDA","FCF","TLB","Revolver"])
-    st.dataframe(lbo)
+    lbo_df = pd.DataFrame(rows)
 
-    # =========================================
-    # RETURNS
-    # =========================================
-    exit_ebitda = lbo.iloc[-1]["EBITDA"]
-    exit_ev = exit_ebitda * exit_multiple
-    exit_equity = exit_ev - (tlb + revolver) + cash
+    last        = lbo_df.iloc[-1]
+    exit_ev     = last["EBITDA"] * params["exit_multiple"]
+    exit_equity = exit_ev - last["Net Debt"]
+    moic        = exit_equity / equity_in if equity_in > 0 else 0
+    irr         = moic ** (1 / params["years"]) - 1 if moic > 0 else 0
 
-    moic = exit_equity / equity
-    irr = moic ** (1 / years) - 1
+    returns = {
+        "Entry EV":     entry_ev,
+        "Total Debt":   total_debt,
+        "Equity In":    equity_in,
+        "Exit EV":      exit_ev,
+        "Exit Equity":  exit_equity,
+        "MOIC":         moic,
+        "IRR":          irr,
+        "Net Debt (Y0)": total_debt - cash_bs,
+    }
 
-    st.header("Returns")
-    st.metric("MOIC", f"{moic:.2f}x")
-    st.metric("IRR", f"{irr*100:.1f}%")
+    return lbo_df, returns
+
+
+# =========================================
+# FORMATTING HELPERS
+# =========================================
+def fmt(x: float, unit: str = "auto") -> str:
+    if unit == "auto":
+        if abs(x) >= 1_000_000:
+            return f"${x/1_000_000:.2f}M"
+        elif abs(x) >= 1_000:
+            return f"${x/1_000:.0f}K"
+        return f"${x:,.0f}"
+    if unit == "pct":
+        return f"{x*100:.1f}%"
+    if unit == "x":
+        return f"{x:.2f}x"
+    return str(x)
+
+FMT_LBO = {
+    "Revenue":       "${:,.0f}",
+    "EBITDA":        "${:,.0f}",
+    "EBITDA Margin": "{:.1%}",
+    "Interest":      "${:,.0f}",
+    "Tax":           "${:,.0f}",
+    "CapEx":         "${:,.0f}",
+    "ΔNWC":          "${:,.0f}",
+    "FCF":           "${:,.0f}",
+    "TLB":           "${:,.0f}",
+    "Revolver":      "${:,.0f}",
+    "Cash":          "${:,.0f}",
+    "Net Debt":      "${:,.0f}",
+}
+
+
+# =========================================
+# ---- SIDEBAR ----
+# =========================================
+st.sidebar.header("⚙️ Deal Parameters")
+
+with st.sidebar.expander("🤖 AI Classification (optional)"):
+    api_key = st.text_input("Anthropic API Key", type="password",
+                            help="Used only to classify unknown P&L line items")
+    use_ai  = st.checkbox("Enable AI classification", value=bool(api_key))
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Valuation")
+entry_multiple = st.sidebar.number_input("Entry EV/EBITDA", 3.0, 20.0, 5.0, 0.5)
+exit_multiple  = st.sidebar.number_input("Exit EV/EBITDA",  3.0, 20.0, 7.0, 0.5)
+
+st.sidebar.subheader("Holding Period & Growth")
+years  = st.sidebar.slider("Holding Period (years)", 1, 7, 5)
+growth = st.sidebar.slider("Revenue Growth % p.a.", 0, 40, 10) / 100
+
+margin_mode = st.sidebar.radio("EBITDA Margin Input", ["Flat", "Per Year"], horizontal=True)
+if margin_mode == "Flat":
+    flat_m = st.sidebar.slider("EBITDA Margin %", 0, 60, 20) / 100
+    margins = [flat_m] * years
+else:
+    margins = [st.sidebar.slider(f"Y{i+1} EBITDA Margin %", 0, 60, 20 + i) / 100
+               for i in range(years)]
+
+st.sidebar.subheader("Capital Structure")
+leverage_pct = st.sidebar.slider("Leverage % of Entry EV", 20, 80, 60) / 100
+tlb_rate     = st.sidebar.slider("TLB Interest Rate %", 0, 20, 7) / 100
+rev_rate     = st.sidebar.slider("Revolver Rate %", 0, 20, 6) / 100
+
+st.sidebar.subheader("Other Assumptions")
+tax_rate  = st.sidebar.slider("Tax Rate %", 0, 35, 17) / 100
+da_pct    = st.sidebar.slider("D&A % of Revenue (if not in P&L)", 0, 15, 3) / 100
+nwc_pct   = st.sidebar.slider("NWC % of Revenue",  0, 20, 5) / 100
+capex_pct = st.sidebar.slider("CapEx % of Revenue", 0, 20, 5) / 100
+min_cash  = st.sidebar.number_input("Minimum Cash ($)", 0, value=50_000, step=10_000)
+
+params = dict(
+    entry_multiple = entry_multiple,
+    exit_multiple  = exit_multiple,
+    years          = years,
+    growth         = growth,
+    margins        = margins,
+    leverage_pct   = leverage_pct,
+    tlb_rate       = tlb_rate,
+    rev_rate       = rev_rate,
+    tax_rate       = tax_rate,
+    da_pct         = da_pct,
+    nwc_pct        = nwc_pct,
+    capex_pct      = capex_pct,
+    min_cash       = float(min_cash),
+)
+
+
+# =========================================
+# ---- MAIN PAGE ----
+# =========================================
+st.title("📊 SME Valuation & LBO Tool")
+st.caption("Upload any P&L and Balance Sheet to generate a full LBO valuation. "
+           "Supports .xlsx, .xls, .csv, and .pdf.")
+st.markdown("---")
+
+st.header("📂 Step 1 — Upload Financials")
+col_pl, col_bs = st.columns(2)
+
+with col_pl:
+    pl_file = st.file_uploader("P&L Statement", type=["xlsx", "xls", "csv", "pdf"])
+
+with col_bs:
+    bs_file = st.file_uploader("Balance Sheet", type=["xlsx", "xls", "csv", "pdf"])
+
+
+# =========================================
+# PROCESS P&L  (single pass — no duplicate reads)
+# =========================================
+pl_metrics = None
+
+if pl_file:
+    raw_pl = read_any_file(pl_file)
+
+    if raw_pl is not None:
+        df_pl = smart_clean(raw_pl)
+        df_pl = classify_pl(df_pl, use_ai=use_ai, api_key=api_key or "")
+
+        st.markdown("---")
+        st.header("📋 Step 2 — Review & Correct Classifications")
+        st.caption("Use the dropdowns to fix any misclassified rows. Corrections are saved automatically.")
+
+        unknown_count = (df_pl["Category"] == "Unknown").sum()
+        if unknown_count:
+            st.warning(f"⚠️ {unknown_count} line item(s) could not be classified automatically. "
+                       "Please assign them below, or enable AI classification in the sidebar.")
+
+        df_pl = st.data_editor(
+            df_pl,
+            column_config={
+                "Category": st.column_config.SelectboxColumn("Category", options=PL_CATEGORIES),
+                "Amount":   st.column_config.NumberColumn("Amount", format="$ %.0f"),
+            },
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+        )
+
+        # Persist corrections to memory
+        save_memory({r["Line Item"]: r["Category"] for _, r in df_pl.iterrows()})
+
+        active_pl = df_pl[~df_pl["Category"].isin(["Ignore", "Unknown"])]
+        pl_metrics = compute_pl(active_pl)
+
+
+# =========================================
+# PROCESS BALANCE SHEET
+# =========================================
+cash_bs = 0.0
+debt_bs = 0.0
+
+if bs_file:
+    raw_bs = read_any_file(bs_file)
+
+    if raw_bs is not None:
+        df_bs = smart_clean(raw_bs)
+        df_bs = classify_bs(df_bs)
+
+        with st.expander("🔍 Balance Sheet Preview", expanded=False):
+            st.dataframe(df_bs, use_container_width=True, hide_index=True)
+
+        cash_bs = df_bs.loc[df_bs["Category"] == "Cash",  "Amount"].sum()
+        debt_bs = df_bs.loc[df_bs["Category"] == "Debt",  "Amount"].sum()
+
+
+# =========================================
+# VALUATION OUTPUT
+# =========================================
+if pl_metrics:
+    st.markdown("---")
+    st.header("📊 Step 3 — Valuation Output")
+
+    # ---- P&L Snapshot ----
+    st.subheader("P&L Snapshot")
+    m = pl_metrics
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Revenue",      fmt(m["Revenue"]))
+    c2.metric("Gross Profit", fmt(m["Gross Profit"]),  fmt(m["GP Margin"], "pct"))
+    c3.metric("EBITDA",       fmt(m["EBITDA"]),         fmt(m["EBITDA Margin"], "pct"))
+    c4.metric("EBIT",         fmt(m["EBIT"]),           fmt(m["EBIT Margin"], "pct"))
+    c5.metric("Net Profit",   fmt(m["Net Profit"]),     fmt(m["Net Margin"], "pct"))
+
+    # ---- P&L Waterfall table ----
+    with st.expander("📄 Full P&L Bridge"):
+        pl_bridge = pd.DataFrame([
+            {"Item": "Revenue",        "Amount": m["Revenue"]},
+            {"Item": "(-)  COGS",      "Amount": -m["COGS"]},
+            {"Item": "Gross Profit",   "Amount": m["Gross Profit"]},
+            {"Item": "(-)  OpEx",      "Amount": -m["OpEx"]},
+            {"Item": "(-)  D&A",       "Amount": -m["D&A"]},
+            {"Item": "(+) Other Inc.", "Amount":  m["Other Income"]},
+            {"Item": "EBITDA",         "Amount": m["EBITDA"]},
+            {"Item": "(-)  Interest",  "Amount": -m["Interest"]},
+            {"Item": "(-)  Tax",       "Amount": -m["Tax"]},
+            {"Item": "Net Profit",     "Amount": m["Net Profit"]},
+        ])
+        pl_bridge["Amount"] = pl_bridge["Amount"].apply(fmt)
+        st.dataframe(pl_bridge, use_container_width=True, hide_index=True)
+
+    # ---- Balance Sheet summary ----
+    if bs_file:
+        st.subheader("Balance Sheet Snapshot")
+        b1, b2, b3 = st.columns(3)
+        b1.metric("Cash & Equivalents", fmt(cash_bs))
+        b2.metric("Total Debt",         fmt(debt_bs))
+        b3.metric("Net Debt",           fmt(debt_bs - cash_bs))
+
+    st.markdown("---")
+
+    # ---- LBO ----
+    ebitda  = m["EBITDA"]
+    revenue = m["Revenue"]
+
+    if ebitda <= 0:
+        st.error("⚠️ EBITDA is zero or negative. LBO model cannot run. "
+                 "Check that Revenue and COGS/OpEx rows are classified correctly.")
+    else:
+        lbo_df, returns = run_lbo(pl_metrics, cash_bs, debt_bs, params)
+
+        # Returns headline
+        st.subheader("📈 Returns Summary")
+        r1, r2, r3, r4, r5 = st.columns(5)
+        r1.metric("Entry EV",   fmt(returns["Entry EV"]))
+        r2.metric("Equity In",  fmt(returns["Equity In"]))
+        r3.metric("Exit EV",    fmt(returns["Exit EV"]))
+        r4.metric("MOIC",       fmt(returns["MOIC"], "x"))
+        r5.metric("IRR",        fmt(returns["IRR"],  "pct"))
+
+        # Sensitivity table — MOIC grid
+        st.subheader("🔢 Sensitivity: MOIC")
+        entry_range = [entry_multiple - 1, entry_multiple, entry_multiple + 1]
+        exit_range  = [exit_multiple  - 1, exit_multiple,  exit_multiple  + 1]
+
+        rows_sens = []
+        for em in entry_range:
+            row = {"Entry \\ Exit": f"{em:.1f}x"}
+            for xm in exit_range:
+                p2 = {**params, "entry_multiple": em, "exit_multiple": xm}
+                _, ret2 = run_lbo(pl_metrics, cash_bs, debt_bs, p2)
+                row[f"Exit {xm:.1f}x"] = f"{ret2['MOIC']:.2f}x"
+            rows_sens.append(row)
+
+        st.dataframe(pd.DataFrame(rows_sens).set_index("Entry \\ Exit"),
+                     use_container_width=True)
+
+        # LBO model table
+        st.subheader("📋 LBO Model")
+        st.dataframe(
+            lbo_df.style.format(FMT_LBO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Valuation bridge
+        with st.expander("🏗️ Valuation Bridge"):
+            bridge = pd.DataFrame([
+                {"Item": "Entry EV",               "Value": fmt(returns["Entry EV"])},
+                {"Item": "  (-) Total Debt",        "Value": fmt(returns["Total Debt"])},
+                {"Item": "  (+) Balance Sheet Cash","Value": fmt(cash_bs)},
+                {"Item": "  (-) Balance Sheet Debt","Value": fmt(debt_bs)},
+                {"Item": "Equity Invested",         "Value": fmt(returns["Equity In"])},
+                {"Item": "────────────────",        "Value": ""},
+                {"Item": "Exit EV",                 "Value": fmt(returns["Exit EV"])},
+                {"Item": "  (-) Exit Net Debt",     "Value": fmt(returns["Exit EV"] - returns["Exit Equity"])},
+                {"Item": "Exit Equity",             "Value": fmt(returns["Exit Equity"])},
+                {"Item": "────────────────",        "Value": ""},
+                {"Item": "MOIC",                    "Value": fmt(returns["MOIC"], "x")},
+                {"Item": "IRR",                     "Value": fmt(returns["IRR"],  "pct")},
+            ])
+            st.dataframe(bridge, use_container_width=True, hide_index=True)
+
+elif not pl_file:
+    st.info("👆 Upload a P&L statement above to get started.")
