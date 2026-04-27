@@ -189,6 +189,118 @@ def compute(df):
     return r, c, o, oi, ebitda, margin
 
 # =========================================
+# BALANCE SHEET (ROBUST INGESTION + CLASSIFICATION)
+# =========================================
+
+def clean_bs(df):
+    df.columns = df.iloc[0].astype(str)
+    df = df[1:].reset_index(drop=True)
+    df = df.dropna(how="all")
+    return df
+
+
+def standardize_bs(df):
+    df = df.iloc[:, :2]
+    df.columns = ["Line Item", "Amount"]
+
+    df["Line Item"] = df["Line Item"].astype(str)
+
+    df["Amount"] = (
+        df["Amount"]
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("(", "-", regex=False)
+        .str.replace(")", "", regex=False)
+        .str.strip()
+    )
+
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+
+    return df
+
+
+def classify_bs(df):
+    df = df.copy()
+
+    def classify(row):
+        item = str(row["Line Item"]).lower()
+
+        # ASSETS
+        if any(x in item for x in ["cash", "bank"]):
+            return "Cash"
+
+        if any(x in item for x in ["receivable", "debtor"]):
+            return "Accounts Receivable"
+
+        if any(x in item for x in ["inventory", "stock"]):
+            return "Inventory"
+
+        if any(x in item for x in ["property", "plant", "equipment", "ppe"]):
+            return "PPE"
+
+        if any(x in item for x in ["intangible", "goodwill"]):
+            return "Intangibles"
+
+        # LIABILITIES
+        if any(x in item for x in ["payable", "creditor"]):
+            return "Accounts Payable"
+
+        if any(x in item for x in ["loan", "debt", "borrow", "bank loan"]):
+            return "Debt"
+
+        if any(x in item for x in ["accrual", "accrued"]):
+            return "Accruals"
+
+        # EQUITY
+        if any(x in item for x in ["share capital", "equity"]):
+            return "Equity"
+
+        if any(x in item for x in ["retained earnings"]):
+            return "Retained Earnings"
+
+        return "Other"
+
+    df["Category"] = df.apply(classify, axis=1)
+
+    return df
+
+
+# =========================================
+# APPLY BS PIPELINE
+# =========================================
+
+cash = 0
+debt = 0
+
+if bs:
+    dfb = pd.read_excel(bs, header=None)
+
+    dfb = clean_bs(dfb)
+    dfb = dedupe_columns(dfb)        # 🔥 SAME FIX AS P&L
+    dfb = standardize_bs(dfb)
+    dfb = classify_bs(dfb)
+
+    st.subheader("BS Cleaned & Classified")
+    st.dataframe(dfb.head(20))
+
+    # =========================================
+    # CORE EXTRACTIONS (used in LBO)
+    # =========================================
+
+    cash = dfb[dfb["Category"] == "Cash"]["Amount"].sum()
+    debt = dfb[dfb["Category"] == "Debt"]["Amount"].sum()
+
+    ar = dfb[dfb["Category"] == "Accounts Receivable"]["Amount"].sum()
+    ap = dfb[dfb["Category"] == "Accounts Payable"]["Amount"].sum()
+    inv = dfb[dfb["Category"] == "Inventory"]["Amount"].sum()
+
+    nwc = ar + inv - ap
+
+    st.write("Cash:", cash)
+    st.write("Debt:", debt)
+    st.write("NWC:", nwc)
+    
+# =========================================
 # UI
 # =========================================
 st.sidebar.header("Deal")
