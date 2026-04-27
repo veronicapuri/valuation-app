@@ -227,10 +227,10 @@ def smart_classify(df):
     df["Category"] = df.apply(rule, axis=1)
     return df
 
-if revenue > 0:
-    margin = (revenue - cogs - opex) / revenue
-    if margin > 0.6:
-        st.warning("🚨 EBITDA margin unusually high — classification likely missing costs")
+    if revenue > 0:
+        margin = (revenue - cogs - opex) / revenue
+        if margin > 0.6:
+            st.warning("🚨 EBITDA margin unusually high — classification likely missing costs")
 
 # ============================
 # TOTALS DETECTION
