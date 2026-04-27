@@ -201,12 +201,15 @@ def clean_bs(df):
 def standardize_bs(df):
     df = df.copy()
 
-    # Convert all columns to string first
+    # Ensure unique column names first
+    df = dedupe_columns(df)
+
+    # Convert everything to string safely
     for col in df.columns:
         df[col] = df[col].astype(str)
 
-    # Identify numeric column (most numbers)
-    numeric_scores = {}
+    # Detect numeric column
+    numeric_counts = {}
 
     for col in df.columns:
         cleaned = (
@@ -215,22 +218,21 @@ def standardize_bs(df):
             .str.replace("(", "-", regex=False)
             .str.replace(")", "", regex=False)
         )
+        numeric_counts[col] = pd.to_numeric(cleaned, errors="coerce").notna().sum()
 
-        numeric_scores[col] = pd.to_numeric(cleaned, errors="coerce").notna().sum()
-
-    # Pick column with most numeric values
-    amount_col = max(numeric_scores, key=numeric_scores.get)
-
-    # First column = line item
+    amount_col = max(numeric_counts, key=numeric_counts.get)
     line_col = df.columns[0]
 
-    df = df[[line_col, amount_col]]
+    # 🔥 FORCE Series (THIS FIXES YOUR ERROR)
+    df = df[[line_col, amount_col]].copy()
+
     df.columns = ["Line Item", "Amount"]
 
-    # Clean numbers properly
+    # Ensure Amount is a Series, not DataFrame
+    df["Amount"] = df["Amount"].astype(str)
+
     df["Amount"] = (
         df["Amount"]
-        .astype(str)
         .str.replace(",", "", regex=False)
         .str.replace("(", "-", regex=False)
         .str.replace(")", "", regex=False)
@@ -239,7 +241,6 @@ def standardize_bs(df):
 
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
 
-    # 🔥 CRITICAL: DO NOT fillna yet — inspect first
     return df
 
     st.write("Detected BS columns:", dfb.columns.tolist())
