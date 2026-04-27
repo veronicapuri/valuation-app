@@ -6,3 +6,4 @@ pdfplumber
 pdfminer.six
 numpy-financial
 openpyxl
+python-dateutil
