@@ -114,7 +114,18 @@ BS_KEYWORDS = {
                      "long term", "non-current", "accumulated"],
 }
  
- 
+
+# =========================================
+# SAFE INITIALIZATION (FIXES NameError)
+# =========================================
+pl_metrics = None
+
+cash_bs = 0.0
+debt_bs = 0.0
+receivables_bs = 0.0
+inventory_bs = 0.0
+payables_bs = 0.0
+
 # =========================================
 # MEMORY
 # =========================================
@@ -482,9 +493,9 @@ def run_lbo(metrics, bs, params):
     return lbo_df, returns
 
 # =========================================
-# RUN LBO (SAFE)
+# ---- LBO ----
 # =========================================
-if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
+if pl_metrics is not None and pl_metrics.get("EBITDA", 0) > 0:
 
     bs_data = {
         "cash": cash_bs,
@@ -496,13 +507,21 @@ if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
 
     lbo_df, returns = run_lbo(pl_metrics, bs_data, params)
 
-    st.header("LBO Output")
-    st.dataframe(lbo_df)
+    # ---- OUTPUT ----
+    st.subheader("📈 Returns Summary")
 
-    st.header("Returns")
-    st.metric("MOIC", f"{returns['MOIC']:.2f}x")
-    st.metric("IRR", f"{returns['IRR']*100:.1f}%")
+    c1, c2 = st.columns(2)
+    c1.metric("MOIC", f"{returns['MOIC']:.2f}x")
+    c2.metric("IRR", f"{returns['IRR']*100:.1f}%")
 
+    st.subheader("📋 LBO Model")
+    st.dataframe(lbo_df, use_container_width=True)
+
+elif pl_metrics is not None:
+    st.warning("⚠️ EBITDA is zero or negative — LBO not run.")
+
+else:
+    st.info("Upload a P&L file to run the LBO model.")
 
 # =========================================
 # FORMATTING HELPERS
