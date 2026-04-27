@@ -137,13 +137,37 @@ if pl:
     debt=0
 
     if bs:
-        dfb=pd.read_excel(bs)
-        dfb=standardize(clean(dfb))
-        dfb["Amount"]=pd.to_numeric(dfb["Amount"],errors="coerce").fillna(0)
-
-        cash=dfb[dfb["Line Item"].str.contains("cash",case=False,na=False)]["Amount"].sum()
-        debt=dfb[dfb["Line Item"].str.contains("debt|loan",case=False,na=False)]["Amount"].sum()
-
+        dfb = pd.read_excel(bs, header=None)
+    
+        # ---- CLEAN HEADER SAFELY ----
+        dfb.columns = dfb.iloc[0].astype(str)
+        dfb = dfb[1:].reset_index(drop=True)
+    
+        # Ensure columns exist
+        dfb.columns = [str(c).strip() for c in dfb.columns]
+    
+        # ---- FORCE FIRST 2 COLUMNS ----
+        dfb = dfb.iloc[:, :2]
+        dfb.columns = ["Line Item", "Amount"]
+    
+        # ---- SAFE CONVERSION ----
+        dfb["Amount"] = (
+            dfb["Amount"]
+            .astype(str)
+            .str.replace(",", "")
+            .str.replace("(", "-")
+            .str.replace(")", "")
+        )
+    
+        dfb["Amount"] = pd.to_numeric(dfb["Amount"], errors="coerce")
+        dfb["Amount"] = dfb["Amount"].fillna(0)
+    
+        # ---- DEBUG CHECK (VERY IMPORTANT) ----
+        st.write("BS preview:", dfb.head())
+    
+        # ---- CLASSIFY ----
+        cash = dfb[dfb["Line Item"].str.contains("cash|bank", case=False, na=False)]["Amount"].sum()
+        debt = dfb[dfb["Line Item"].str.contains("loan|debt|borrow", case=False, na=False)]["Amount"].sum()
     # =========================================
     # FORECAST
     # =========================================
