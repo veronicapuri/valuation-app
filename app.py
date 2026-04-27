@@ -497,8 +497,7 @@ returns = {
     "MOIC": moic,
     "IRR": irr
 }
-
-    return lbo_df, returns
+return lbo_df, returns
 
 # =========================================
 # ---- LBO ----
