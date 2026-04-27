@@ -198,13 +198,36 @@ def clean_bs(df):
     df = df.dropna(how="all")
     return df
 
-
 def standardize_bs(df):
-    df = df.iloc[:, :2]
+    df = df.copy()
+
+    # Convert all columns to string first
+    for col in df.columns:
+        df[col] = df[col].astype(str)
+
+    # Identify numeric column (most numbers)
+    numeric_scores = {}
+
+    for col in df.columns:
+        cleaned = (
+            df[col]
+            .str.replace(",", "", regex=False)
+            .str.replace("(", "-", regex=False)
+            .str.replace(")", "", regex=False)
+        )
+
+        numeric_scores[col] = pd.to_numeric(cleaned, errors="coerce").notna().sum()
+
+    # Pick column with most numeric values
+    amount_col = max(numeric_scores, key=numeric_scores.get)
+
+    # First column = line item
+    line_col = df.columns[0]
+
+    df = df[[line_col, amount_col]]
     df.columns = ["Line Item", "Amount"]
 
-    df["Line Item"] = df["Line Item"].astype(str)
-
+    # Clean numbers properly
     df["Amount"] = (
         df["Amount"]
         .astype(str)
@@ -214,10 +237,14 @@ def standardize_bs(df):
         .str.strip()
     )
 
-    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
 
+    # 🔥 CRITICAL: DO NOT fillna yet — inspect first
     return df
 
+st.write("Detected BS columns:", dfb.columns.tolist())
+st.write("Raw BS preview:", dfb.head(10))
+st.write("Non-zero count:", (dfb["Amount"] != 0).sum())
 
 def classify_bs(df):
     df = df.copy()
