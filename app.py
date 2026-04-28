@@ -338,11 +338,11 @@ def _parse_line_to_label_amount(line: str):
         return None
     return label, cur_raw
 
-
 def _ocr_pdf(file_bytes: bytes):
     if not PDF_OCR:
         st.error("📦 OCR requires pdf2image + pytesseract + Pillow.")
         return None
+
     try:
         images = convert_from_bytes(file_bytes, dpi=300)
     except Exception as e:
@@ -350,23 +350,29 @@ def _ocr_pdf(file_bytes: bytes):
         return None
 
     rows = []
+
     for img in images:
-        img  = _preprocess_image_for_ocr(img)
+        img = _preprocess_image_for_ocr(img)
         text = pytesseract.image_to_string(img, config="--psm 6")
+
         for line in text.splitlines():
             parsed = _parse_line_to_label_amount(line)
+            
             if parsed:
                 rows.append(list(parsed))
+            elif re.search(r"\d", line):
+                # has numbers but failed parse → log it
+                st.warning(f"OCR parse failed: {line}")
             else:
                 clean = re.sub(r"[|_]{2,}", "", line).strip()
-                if clean and not re.fullmatch(r"[\d\s.,\-()]+", clean):
+                if clean:
                     rows.append([clean, "0"])
 
     if not rows:
         st.error("OCR produced no usable rows. Check PDF quality.")
         return None
-    return pd.DataFrame(rows, columns=["c0", "c1"], dtype=str)
 
+    return pd.DataFrame(rows, columns=["c0", "c1"], dtype=str)
 
 def read_any_file(uploaded_file, use_adobe: bool = False):
     name = uploaded_file.name.lower()
@@ -709,7 +715,10 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float,
 
     net_debt_bs = debt_bs - cash_bs
     # FIX: floor equity_in at 1 to prevent divide-by-zero on very cash-rich companies
-    equity_in = max(1.0, entry_ev - total_debt + net_debt_bs)
+    equity_in = entry_ev - total_debt + net_debt_bs
+
+    if equity_in <= 0:
+        equity_in = 1.0
 
     cash     = float(params["min_cash"])
     prev_nwc = params.get("initial_nwc", revenue * params["nwc_pct"])
@@ -717,7 +726,11 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float,
 
     for i in range(params["years"]):
         rev      = revenue * (1 + params["growth"]) ** (i + 1)
-        ebitda_y = rev * params["margins"][i]
+        base_margin = metrics["EBITDA"] / metrics["Revenue"] if metrics["Revenue"] else 0
+        if params.get("use_override_margin", True):
+            ebitda_y = rev * params["margins"][i]
+        else:
+            ebitda_y = rev * base_margin
         da_y     = rev * params["da_pct"]
         ebit_lbo = ebitda_y - da_y
         interest = tlb * params["tlb_rate"] + revolver * params["rev_rate"]
@@ -763,7 +776,14 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float,
         }
 
     moic = exit_equity / equity_in
-    irr  = moic ** (1 / params["years"]) - 1 if moic > 0 else 0
+    cashflows = [-equity_in]
+    
+    for row in rows:
+        cashflows.append(row["FCF"])
+    
+    cashflows[-1] += exit_equity  # add exit
+    
+    irr = np.irr(cashflows)
 
     return lbo_df, {
         "Entry EV": entry_ev, "Total Debt": total_debt, "Equity In": equity_in,
