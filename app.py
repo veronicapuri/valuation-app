@@ -385,30 +385,41 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
         raw_col = df.iloc[:, 0].astype(str)
 
         def extract_label_and_amount(text):
-            text = re.sub(r"\s+", " ", text)
-            text = re.sub(r"^\$\$+", "", text).strip()
+            text = re.sub(r"\s+", " ", text).strip()
         
             matches = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
         
-            if not matches:
-                return text.strip(), "0"
+            parsed = []
+            for m in matches:
+                try:
+                    val = float(
+                        m.replace(",", "")
+                         .replace("(", "-")
+                         .replace(")", "")
+                    )
+                    parsed.append((m, val))
+                except:
+                    continue
         
-            # 🔥 Step 1: prefer numbers with commas
-            comma_nums = [m for m in matches if "," in m]
+            if not parsed:
+                return text, "0"
         
-            if comma_nums:
-                amount_str = comma_nums[-1]   # rightmost comma number
+            # 🔥 REMOVE small numbers (notes)
+            filtered = [p for p in parsed if abs(p[1]) > 100]
+        
+            if not filtered:
+                amount_str = parsed[-1][0]
             else:
-                # fallback: last number
-                amount_str = matches[-1]
+                # 🔥 KEY: take LEFTMOST large number (current year)
+                amount_str = filtered[0][0]
         
-            # Remove only that number from label
             label = text.replace(amount_str, "")
-            label = re.sub(r"[-–—]+$", "", label)
-            label = re.sub(r"\b\d{1,2}\b", "", label)  # remove small note numbers like 9, 10, 11
+            label = re.sub(r"\b\d{1,2}\b", "", label)
             label = label.strip()
         
             return label, amount_str
+        for line in raw_col.head(20):
+            st.write("RAW:", repr(line))
     
         # ✅ THIS MUST STAY INSIDE
         rows = raw_col.apply(lambda x: pd.Series(extract_label_and_amount(x)))
