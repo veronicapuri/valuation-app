@@ -381,41 +381,41 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── OCR fallback: handle single-column messy PDFs ─────────────────────────
     if df.shape[1] == 1:
-    raw_col = df.iloc[:, 0].astype(str)
-
-    def extract_label_and_amount(text):
-        text = re.sub(r"\s+", " ", text)
-        text = re.sub(r"^\$\$+", "", text).strip()
-
-        matches = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
-
-        candidates = []
-        for m in matches:
-            try:
-                val = float(
-                    m.replace(",", "")
-                     .replace("(", "-")
-                     .replace(")", "")
-                )
-
-                if abs(val) < 100:
+        raw_col = df.iloc[:, 0].astype(str)
+    
+        def extract_label_and_amount(text):
+            text = re.sub(r"\s+", " ", text)
+            text = re.sub(r"^\$\$+", "", text).strip()
+    
+            matches = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
+    
+            candidates = []
+            for m in matches:
+                try:
+                    val = float(
+                        m.replace(",", "")
+                         .replace("(", "-")
+                         .replace(")", "")
+                    )
+    
+                    if abs(val) < 100:
+                        continue
+    
+                    candidates.append((m, val))
+    
+                except:
                     continue
-
-                candidates.append((m, val))
-
-            except:
-                continue
-
-        if not candidates:
-            return text.strip(), "0"
-
-        # 🔥 pick largest number
-        amount_str, _ = max(candidates, key=lambda x: abs(x[1]))
-
-        label = text.replace(amount_str, "")
-        label = re.sub(r"[-–—]+$", "", label).strip()
-
-        return label, amount_str
+    
+            if not candidates:
+                return text.strip(), "0"
+    
+            # 🔥 pick largest number
+            amount_str, _ = max(candidates, key=lambda x: abs(x[1]))
+    
+            label = text.replace(amount_str, "")
+            label = re.sub(r"[-–—]+$", "", label).strip()
+    
+            return label, amount_str
 
     # ✅ SIMPLE + CLEAN
     rows = raw_col.apply(lambda x: pd.Series(extract_label_and_amount(x)))
