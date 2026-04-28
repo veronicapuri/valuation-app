@@ -383,38 +383,31 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     # ── OCR fallback: handle single-column messy PDFs ─────────────────────────
     if df.shape[1] == 1:
         raw_col = df.iloc[:, 0].astype(str)
-    
+
         def extract_label_and_amount(text):
             text = re.sub(r"\s+", " ", text)
             text = re.sub(r"^\$\$+", "", text).strip()
-    
+        
             matches = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
-    
-            candidates = []
-            for m in matches:
-                try:
-                    val = float(
-                        m.replace(",", "")
-                         .replace("(", "-")
-                         .replace(")", "")
-                    )
-    
-                    if abs(val) < 100:
-                        continue
-    
-                    candidates.append((m, val))
-    
-                except:
-                    continue
-    
-            if not candidates:
+        
+            if not matches:
                 return text.strip(), "0"
-    
-            amount_str, _ = max(candidates, key=lambda x: abs(x[1]))
-    
+        
+            # 🔥 Step 1: prefer numbers with commas
+            comma_nums = [m for m in matches if "," in m]
+        
+            if comma_nums:
+                amount_str = comma_nums[-1]   # rightmost comma number
+            else:
+                # fallback: last number
+                amount_str = matches[-1]
+        
+            # Remove only that number from label
             label = text.replace(amount_str, "")
-            label = re.sub(r"[-–—]+$", "", label).strip()
-    
+            label = re.sub(r"[-–—]+$", "", label)
+            label = re.sub(r"\b\d{1,2}\b", "", label)  # remove small note numbers like 9, 10, 11
+            label = label.strip()
+        
             return label, amount_str
     
         # ✅ THIS MUST STAY INSIDE
