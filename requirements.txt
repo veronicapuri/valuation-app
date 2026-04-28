@@ -7,3 +7,6 @@ pdfminer.six
 numpy-financial
 openpyxl
 python-dateutil
+pdf2image
+pytesseract
+Pillow
