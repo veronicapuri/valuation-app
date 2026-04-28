@@ -302,14 +302,27 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     # ── OCR fallback: handle single-column messy PDFs ─────────────────────────
     if df.shape[1] == 1:
         raw_col = df.iloc[:, 0].astype(str)
-
-        split = raw_col.str.extract(
-            r"^(.*?)[\s]+(-?\(?[\d,]+\)?\.?\d*)\s*$"
-        )
-
+    
+        def extract_label_amount(text):
+            # find ALL numbers in the line
+            numbers = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
+    
+            if not numbers:
+                return text.strip(), "0"
+    
+            amount = numbers[-1]  # take LAST number (most reliable)
+            label = text.replace(amount, "").strip()
+    
+            # clean trailing dashes or junk
+            label = re.sub(r"[-–—]+$", "", label).strip()
+    
+            return label, amount
+    
+        split = raw_col.apply(lambda x: pd.Series(extract_label_amount(x)))
+    
         df = pd.DataFrame({
-            "c0": split[0].fillna(raw_col).str.strip(),
-            "c1": split[1].fillna("0")
+            "c0": split[0],
+            "c1": split[1]
         })
 
     # ── Detect amount column ──────────────────────────────────────────────────
