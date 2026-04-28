@@ -196,19 +196,12 @@ def _ocr_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
         img = _preprocess_image_for_ocr(img)   # FIX #3: pre-process
         text = pytesseract.image_to_string(img, config="--psm 6")
         for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            m = re.search(
-                r"(-?\s*[\d,]+\.?\d*|\([\d,]+\.?\d*\))\s*$", line
-            )
-            if m:
-                label = re.sub(r"[|_]{2,}", "", line[: m.start()]).strip()
-                if label:
-                    rows.append([label, m.group(0).strip()])
+            parsed = _parse_line_to_label_amount(line)
+            if parsed:
+                rows.append(list(parsed))
             else:
                 clean = re.sub(r"[|_]{2,}", "", line).strip()
-                if clean:
+                if clean and not re.fullmatch(r"[\d\s.,\-()]+", clean):
                     rows.append([clean, "0"])
 
     if not rows:
@@ -259,26 +252,22 @@ def read_any_file(uploaded_file, use_adobe: bool = False) -> "pd.DataFrame | Non
                 if tables:
                     return pd.concat(tables, ignore_index=True)
 
-                # FIX #4: fallback to plain-text extraction for digital PDFs
-                # that lack marked-up tables (common in accounting software exports)
+                # FIX #4 + note-column fix: plain-text extraction for digital PDFs
+                # that lack marked-up tables (common in accounting software exports).
+                # Uses _parse_line_to_label_amount which correctly ignores Note
+                # reference numbers (e.g. "Revenue 9 461,377" → 461,377 not 9461377).
                 text_rows = []
                 with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                     for page in pdf.pages:
                         text = page.extract_text() or ""
                         for line in text.splitlines():
-                            line = line.strip()
-                            if not line:
-                                continue
-                            m = re.search(
-                                r"(-?\s*[\d,]+\.?\d*|\([\d,]+\.?\d*\))\s*$", line
-                            )
-                            if m:
-                                label = line[: m.start()].strip()
-                                if label:
-                                    text_rows.append([label, m.group(0).strip()])
+                            parsed = _parse_line_to_label_amount(line)
+                            if parsed:
+                                text_rows.append(list(parsed))
                             else:
-                                if line:
-                                    text_rows.append([line, "0"])
+                                clean = re.sub(r"[|_]{2,}", "", line).strip()
+                                if clean and not re.fullmatch(r"[\d\s.,\-()]+", clean):
+                                    text_rows.append([clean, "0"])
                 if text_rows:
                     st.info("📄 Parsed as plain-text digital PDF.")
                     return pd.DataFrame(text_rows, columns=["c0", "c1"], dtype=str)
@@ -307,12 +296,103 @@ def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# FIX #14: normalize_text_numbers is now actually called in smart_clean()
+# ── Number / note-reference utilities ────────────────────────────────────────
+
+# Matches a financial amount: optional leading minus or open-paren,
+# digits with optional comma-separators, optional decimal, optional close-paren.
+# e.g.  461,377   (287,042)   -9,236   1,004,168
+_AMOUNT_RE = re.compile(
+    r"(\([\d,]+(?:\.\d+)?\)|-?[\d,]+(?:\.\d+)?)"
+)
+
+# A "note reference" is a standalone small integer (1–99) that appears between
+# the label text and the first real financial amount on the line.
+# We strip these so "Revenue  9  461,377" → label="Revenue", amount=461,377.
+_NOTE_RE = re.compile(r"\b([1-9][0-9]?)\b")
+
+
+def _strip_note_refs(label: str) -> str:
+    """Remove trailing standalone note-reference numbers from a label string."""
+    # Strip any trailing isolated 1-2 digit integers (note column artefacts)
+    return re.sub(r"\s+\b\d{1,2}\b\s*$", "", label).strip()
+
+
 def normalize_text_numbers(text: str) -> str:
-    """Fix OCR spacing artefacts inside numbers, e.g. '9 461,377' → '9461,377'."""
-    text = re.sub(r"(\d)\s+(\d{3},\d{3})", r"\1\2", text)
-    text = re.sub(r"(\d{1,2})\s+(\d{3},\d{3})", r"\1\2", text)
+    """
+    Fix OCR spacing artefacts inside numbers.
+    e.g. '9 461,377' → but we no longer join these blindly;
+    instead we rely on _parse_line_to_label_amount for note-aware splitting.
+    This function is now a lightweight passthrough kept for compatibility.
+    """
     return text
+
+
+def _parse_line_to_label_amount(line: str) -> "tuple[str, str] | None":
+    """
+    Parse a single text line from a financial statement into (label, current-year-amount).
+
+    Handles the common Singapore SME accounts layout where pdfplumber returns:
+
+        Label text   [NoteRef]   CurrentYear   [PriorYear]
+
+    e.g.
+        "Revenue 9 461,377 393,938"           → ("Revenue", "461,377")
+        "- Employee benefits expense 11 159,835 137,174" → ("- Employee benefits expense", "159,835")
+        "Tax expense 12 (9,236) (8,021)"      → ("Tax expense", "(9,236)")
+        "- Finance costs - bank charges 79 257" → ("- Finance costs - bank charges", "79")
+        "Profit before tax 177,005 146,679"   → ("Profit before tax", "177,005")
+        "Trade and other receivables 3 981,272 846,440" → ("Trade and other receivables", "981,272")
+
+    Note references (column 'Note' in signed accounts) are standalone small integers
+    ≤ 20 that appear before the financial figures. They are stripped from the label
+    and excluded from the amount selection.
+
+    Current-year is always the LEFTMOST financial figure after any note ref.
+    Prior-year (rightmost) is intentionally ignored.
+    """
+    line = line.strip()
+    if not line:
+        return None
+
+    found = [(m.start(), m.group()) for m in _AMOUNT_RE.finditer(line)]
+    if not found:
+        return None
+
+    def _to_float(s: str) -> float:
+        s = s.replace(",", "").replace("(", "-").replace(")", "")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    parsed = [(pos, raw, _to_float(raw)) for pos, raw in found]
+
+    # Formatted = has commas, decimal, or parentheses → clearly a financial figure
+    formatted  = [(pos, raw, val) for pos, raw, val in parsed if "," in raw or "." in raw or "(" in raw]
+    plain_ints = [(pos, raw, val) for pos, raw, val in parsed if not ("," in raw or "." in raw or "(" in raw)]
+
+    if formatted:
+        # Has formatted amounts — any plain ints before first formatted one are note refs.
+        # Current year = leftmost formatted amount.
+        cur_pos, cur_raw, cur_val = formatted[0]
+    else:
+        # All plain integers — e.g. "Finance costs 79 257" or "Share capital 7 1 1"
+        # Note refs in Singapore accounts are ≤ 20 (max ~12 notes per statement).
+        # If leading int is ≤ 20 AND there are 2+ more numbers → it's a note ref.
+        if len(plain_ints) >= 3 and abs(plain_ints[0][2]) <= 20:
+            cur_pos, cur_raw, cur_val = plain_ints[1]   # skip note ref, take current year
+        else:
+            cur_pos, cur_raw, cur_val = plain_ints[0]   # first of [current, prior]
+
+    label = line[:cur_pos].strip()
+    label = _strip_note_refs(label)
+    label = re.sub(r"[|_]{2,}", "", label).strip()
+    label = re.sub(r"\s{2,}", " ", label)
+
+    if not label:
+        return None
+
+    return label, cur_raw
 
 
 def parse_amount(series: pd.Series) -> pd.Series:
@@ -407,61 +487,13 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     if df.shape[1] == 1:
         raw_col = df.iloc[:, 0].astype(str)
 
-        # FIX #14: apply number normalisation before extraction
-        raw_col = raw_col.apply(normalize_text_numbers)
+        def _to_row(text):
+            result = _parse_line_to_label_amount(text)
+            if result:
+                return pd.Series(result)
+            return pd.Series([text.strip(), "0"])
 
-        def extract_label_and_amount(text):
-            text = re.sub(r"\s+", " ", text).strip()
-            matches = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
-
-            parsed = []
-            for m in matches:
-                try:
-                    val = float(
-                        m.replace(",", "")
-                         .replace("(", "-")
-                         .replace(")", "")
-                    )
-                    parsed.append((m, val))
-                except (ValueError, AttributeError):  # FIX #16: typed except
-                    continue
-
-            if not parsed:
-                return text, "0"
-
-            # FIX #2 (OCR): Pick the rightmost large number to avoid
-            # note-reference numbers (which appear on the left) winning.
-            # Strategy: find position of each match in the text, filter
-            # to those in the right 50% of the string, prefer largest abs val.
-            text_len = max(len(text), 1)
-            positioned = []
-            cursor = 0
-            for m, val in parsed:
-                pos = text.find(m, cursor)
-                if pos == -1:
-                    pos = text.rfind(m)
-                positioned.append((pos, m, val))
-                cursor = pos + 1
-
-            # Only consider numbers in the right 50% of the line
-            right_half = [p for p in positioned if p[0] >= text_len * 0.5]
-            candidates = right_half if right_half else positioned
-
-            # Filter to "large" values (> 100), prefer those
-            large = [p for p in candidates if abs(p[2]) > 100]
-            if large:
-                # Take rightmost large number (current year column)
-                _, amount_str, _ = max(large, key=lambda p: p[0])
-            else:
-                # No large numbers — fall back to rightmost any number
-                _, amount_str, _ = max(candidates, key=lambda p: p[0])
-
-            label = text.replace(amount_str, "")
-            label = re.sub(r"\b\d{1,2}\b", "", label).strip()
-            return label, amount_str
-
-        # FIX #1: no debug st.write here — removed entirely
-        rows = raw_col.apply(lambda x: pd.Series(extract_label_and_amount(x)))
+        rows = raw_col.apply(_to_row)
         df   = pd.DataFrame({"c0": rows[0], "c1": rows[1]})
 
     # ── Detect amount column ──────────────────────────────────────────────────
