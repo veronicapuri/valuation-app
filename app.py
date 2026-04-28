@@ -17,6 +17,12 @@ try:
 except ImportError:
     PDF_OCR = False
 
+USE_ADOBE = False  # turn on only if needed
+
+def adobe_extract(file_bytes):
+    # Placeholder — prevents crashes if toggled on accidentally
+    raise NotImplementedError("Adobe extraction not implemented yet")
+
 st.set_page_config(layout="wide", page_title="SME Valuation Tool", page_icon="📊")
 
 # =========================================
@@ -216,7 +222,15 @@ def read_any_file(uploaded_file) -> "pd.DataFrame | None":
 
     if name.endswith(".pdf"):
         file_bytes = uploaded_file.read()
-
+    
+        # 🔥 STEP 0: Optional Adobe preprocessing
+        if USE_ADOBE:
+            try:
+                st.info("☁️ Using Adobe extraction...")
+                return adobe_extract(file_bytes)
+            except Exception:
+                st.warning("⚠️ Adobe failed — falling back to local parsing")
+    
         # Strategy 1: digital text tables
         if PDF_DIGITAL:
             try:
@@ -230,11 +244,11 @@ def read_any_file(uploaded_file) -> "pd.DataFrame | None":
                     return pd.concat(tables, ignore_index=True)
             except Exception:
                 pass
-
-        # Strategy 2: OCR
+    
+        # Strategy 2: OCR fallback
         st.info("📷 No digital tables found — running OCR on scanned PDF…")
         return _ocr_pdf(file_bytes)
-
+    
     st.error(f"Unsupported file type: {name}")
     return None
 
@@ -283,12 +297,43 @@ def score_amount_column(series):
 
     return score
 
-    # Prefer columns with larger median magnitude
-    if best_col:
-        best_vals = parse_amount(df[best_col])
-        if np.median(np.abs(best_vals)) < 1000:
-            st.warning("⚠️ Detected unusually small values — possible wrong column")
+def detect_column_confidence(df):
+    scores = {}
 
+    for col in df.columns:
+        scores[col] = score_amount_column(df[col])
+
+    # Sort columns by score
+    sorted_cols = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+    if len(sorted_cols) < 2:
+        return 1.0, sorted_cols
+
+    best = sorted_cols[0][1]
+    second = sorted_cols[1][1]
+
+    # Confidence = how much better best is than second
+    confidence = (best - second) / (abs(best) + 1e-6)
+
+    return confidence, sorted_cols
+
+def merge_multiline_rows(df):
+    merged = []
+    buffer = ""
+
+    for _, row in df.iterrows():
+        label = str(row["Line Item"]).strip()
+        amount = row["Amount"]
+
+        if amount == 0 and len(label.split()) < 5:
+            buffer += " " + label
+        else:
+            full_label = (buffer + " " + label).strip()
+            merged.append([full_label, amount])
+            buffer = ""
+
+    return pd.DataFrame(merged, columns=["Line Item", "Amount"])
+    
 # ── Metadata row detection ────────────────────────────────────────────────────
 # Uses explicit phrase matching — NOT substring matching on short tokens like
 # "sgd", "usd" — to avoid dropping valid account names like "AirWallex(SGD)".
@@ -340,7 +385,7 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
                 val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
                 
                 # Keep only meaningful financial values
-                if abs(val) >= 100: 
+                if abs(val) >= 1:
                     clean_numbers.append(n)
             
             numbers = clean_numbers
@@ -368,18 +413,43 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
         # Rename columns → c0 = label, rest = numeric candidates
         df.columns = [f"c{i}" for i in range(len(df.columns))]
    
-
+    def detect_column_confidence(df):
+        scores = {}
+    
+        for col in df.columns:
+            scores[col] = score_amount_column(df[col])
+    
+        # Sort columns by score
+        sorted_cols = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    
+        if len(sorted_cols) < 2:
+            return 1.0, sorted_cols
+    
+        best = sorted_cols[0][1]
+        second = sorted_cols[1][1]
+    
+        # Confidence = how much better best is than second
+        confidence = (best - second) / (abs(best) + 1e-6)
+    
+        return confidence, sorted_cols
+    
     # ── Detect amount column ──────────────────────────────────────────────────
     best_col, best_score = None, -1
     
     for col in df.columns:
         score = score_amount_column(df[col])
     
-        # ✅ ADD THIS LINE HERE
-        st.write(f"{col}: {score}")
-    
         if score > best_score:
             best_score, best_col = score, col
+
+    confidence, ranked_cols = detect_column_confidence(df)
+    
+    # Optional debug
+    st.write("Column ranking:", ranked_cols)
+    st.write("Confidence:", confidence)
+    
+    if confidence < 0.15:
+        st.warning("⚠️ Low confidence in detected amount column — please review")
 
     # ── Detect label column ───────────────────────────────────────────────────
     label_col, label_score = None, -1
@@ -406,13 +476,13 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
         "Line Item": df[label_col].astype(str).str.strip(),
         "Amount": parse_amount(df[best_col]),
     })
-
     result = result[result["Line Item"].apply(lambda x: not _is_meta_row(x))]
-    result = result[~result["Line Item"].str.fullmatch(r"[\d\s.,\-()%\[\]]+")]
-    result = result.reset_index(drop=True)
     result = result[~result["Line Item"].str.lower().str.contains(
         r"statement|note|\$\$|comprehensive income"
     )]
+    result = result[~result["Line Item"].str.fullmatch(r"[\d\s.,\-()%\[\]]+")]
+    result = result.reset_index(drop=True)
+    result = merge_multiline_rows(result)
     return result
 
 # =========================================
