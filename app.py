@@ -379,6 +379,7 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [f"c{i}" for i in range(len(df.columns))]
 
 
+
     # ── OCR fallback: handle single-column messy PDFs ─────────────────────────
     if df.shape[1] == 1:
         raw_col = df.iloc[:, 0].astype(str)
@@ -409,21 +410,20 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
             if not candidates:
                 return text.strip(), "0"
     
-            # 🔥 pick largest number
             amount_str, _ = max(candidates, key=lambda x: abs(x[1]))
     
             label = text.replace(amount_str, "")
             label = re.sub(r"[-–—]+$", "", label).strip()
     
             return label, amount_str
-
-    # ✅ SIMPLE + CLEAN
-    rows = raw_col.apply(lambda x: pd.Series(extract_label_and_amount(x)))
-
-    df = pd.DataFrame({
-        "c0": rows[0],
-        "c1": rows[1]
-    })
+    
+        # ✅ THIS MUST STAY INSIDE
+        rows = raw_col.apply(lambda x: pd.Series(extract_label_and_amount(x)))
+    
+        df = pd.DataFrame({
+            "c0": rows[0],
+            "c1": rows[1]
+        })
    
     def detect_column_confidence(df):
         scores = {}
