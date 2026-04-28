@@ -340,7 +340,7 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
                 val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
                 
                 # Keep only meaningful financial values
-                if abs(val) >= 0.01 * max_detected_value
+                if abs(val) >= 100: 
                     clean_numbers.append(n)
             
             numbers = clean_numbers
