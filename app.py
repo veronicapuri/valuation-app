@@ -293,48 +293,63 @@ def _is_meta_row(label: str) -> bool:
         return True
     return any(p in xl for p in _META_PHRASES)
 
-
 def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Extract (Line Item, Amount) from any financial statement layout.
-
-    Column detection:
-      best_col  = most non-zero numeric values  → Amount
-      label_col = most non-empty text (penalised for numeric content) → Line Item
-    """
     df = df.dropna(how="all").reset_index(drop=True)
     df = df.fillna("").astype(str)
     df = dedupe_columns(df)
     df.columns = [f"c{i}" for i in range(len(df.columns))]
 
-    # Best amount column
+    # ── OCR fallback: handle single-column messy PDFs ─────────────────────────
+    if df.shape[1] == 1:
+        raw_col = df.iloc[:, 0].astype(str)
+
+        split = raw_col.str.extract(
+            r"^(.*?)[\s]+(-?\(?[\d,]+\)?\.?\d*)\s*$"
+        )
+
+        df = pd.DataFrame({
+            "c0": split[0].fillna(raw_col).str.strip(),
+            "c1": split[1].fillna("0")
+        })
+
+    # ── Detect amount column ──────────────────────────────────────────────────
     best_col, best_score = None, -1
     for col in df.columns:
         score = (parse_amount(df[col]) != 0).sum()
         if score > best_score:
             best_score, best_col = score, col
 
-    # Best label column
+    # ── Detect label column ───────────────────────────────────────────────────
     label_col, label_score = None, -1
     for col in df.columns:
         if col == best_col:
             continue
         non_empty = (df[col].str.strip() != "").sum()
         numeric   = (parse_amount(df[col]) != 0).sum()
-        score     = non_empty - numeric * 3   # heavy penalty for numeric cols
+        score     = non_empty - numeric * 3
         if score > label_score:
             label_score, label_col = score, col
 
+    # ── Fallbacks (CRITICAL) ──────────────────────────────────────────────────
+    if label_col is None:
+        st.warning("⚠️ Could not detect label column — using first column.")
+        label_col = df.columns[0]
+
+    if best_col is None:
+        st.error("❌ Could not detect amount column.")
+        return None
+
+    # ── Build final table ─────────────────────────────────────────────────────
     result = pd.DataFrame({
-        "Line Item": df[label_col].str.strip(),
-        "Amount":    parse_amount(df[best_col]),
+        "Line Item": df[label_col].astype(str).str.strip(),
+        "Amount": parse_amount(df[best_col]),
     })
 
     result = result[result["Line Item"].apply(lambda x: not _is_meta_row(x))]
     result = result[~result["Line Item"].str.fullmatch(r"[\d\s.,\-()%\[\]]+")]
     result = result.reset_index(drop=True)
-    return result
 
+    return result
 
 # =========================================
 # CLASSIFICATION — P&L
