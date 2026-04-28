@@ -261,6 +261,7 @@ def parse_amount(series: pd.Series) -> pd.Series:
         .pipe(lambda s: pd.to_numeric(s, errors="coerce"))
         .fillna(0)
     )
+
 def score_amount_column(series):
     nums = parse_amount(series)
 
@@ -270,20 +271,18 @@ def score_amount_column(series):
     if len(nums) == 0:
         return -1
 
-    # Key idea:
-    # Real financial column = larger magnitudes + consistency
+    abs_vals = np.abs(nums)
 
-    median = np.median(np.abs(nums))
-    total  = np.sum(np.abs(nums))
-
+    # 🔥 MUCH stronger signal
     score = (
-        len(nums) * 5           # consistency
-        + np.log1p(total) * 2   # total scale (VERY important)
-        + np.log1p(median) * 3  # typical size (VERY important)
+        len(abs_vals) * 5
+        + np.log1p(abs_vals.sum()) * 3
+        + np.log1p(np.median(abs_vals)) * 5
+        + np.max(abs_vals) * 0.00001   # <-- KEY: pushes large columns to win
     )
 
     return score
-    
+
     # Prefer columns with larger median magnitude
     if best_col:
         best_vals = parse_amount(df[best_col])
@@ -361,8 +360,13 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── Detect amount column ──────────────────────────────────────────────────
     best_col, best_score = None, -1
+    
     for col in df.columns:
         score = score_amount_column(df[col])
+    
+        # ✅ ADD THIS LINE HERE
+        st.write(f"{col}: {score}")
+    
         if score > best_score:
             best_score, best_col = score, col
 
@@ -395,7 +399,9 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     result = result[result["Line Item"].apply(lambda x: not _is_meta_row(x))]
     result = result[~result["Line Item"].str.fullmatch(r"[\d\s.,\-()%\[\]]+")]
     result = result.reset_index(drop=True)
-
+    result = result[~result["Line Item"].str.lower().str.contains(
+        r"statement|note|\$\$|comprehensive income"
+    )]
     return result
 
 # =========================================
