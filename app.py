@@ -262,6 +262,26 @@ def parse_amount(series: pd.Series) -> pd.Series:
         .fillna(0)
     )
 
+def score_amount_column(series):
+    nums = parse_amount(series)
+
+    # Ignore zeros
+    nums = nums[nums != 0]
+
+    if len(nums) == 0:
+        return -1
+
+    # Heuristics:
+    # 1. More non-zero values = good
+    # 2. Larger magnitudes = more likely real financials
+    # 3. Penalize very small numbers (like notes, page numbers)
+
+    score = (
+        len(nums) * 10
+        + np.log1p(nums.abs()).sum()   # favors large financial numbers
+    )
+
+    return score
 
 # ── Metadata row detection ────────────────────────────────────────────────────
 # Uses explicit phrase matching — NOT substring matching on short tokens like
@@ -335,7 +355,7 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     # ── Detect amount column ──────────────────────────────────────────────────
     best_col, best_score = None, -1
     for col in df.columns:
-        score = (parse_amount(df[col]) != 0).sum()
+        score = score_amount_column(df[col])
         if score > best_score:
             best_score, best_col = score, col
 
