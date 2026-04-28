@@ -397,7 +397,31 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     
             label = re.sub(r"[-–—]+$", "", label).strip()
     
-            return [label] + numbers  # keep ALL numbers
+            def extract_label_and_numbers(text):
+                numbers = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
+                numbers = [n for n in numbers if re.search(r"\d", n)]
+            
+                # Convert safely
+                parsed = []
+                for n in numbers:
+                    try:
+                        val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
+                        parsed.append((n, val))
+                    except:
+                        continue
+            
+                if not parsed:
+                    return [text.strip(), "0"]
+            
+                # 🔥 KEY FIX: take LAST meaningful number
+                amount_str, amount_val = parsed[-1]
+            
+                # Remove ONLY that number from label
+                label = text.replace(amount_str, "")
+                label = re.sub(r"[-–—]+$", "", label).strip()
+            
+                return [label, amount_str]
+    
     
         rows = raw_col.apply(extract_label_and_numbers)
     
