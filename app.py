@@ -743,10 +743,14 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float,
         tax     = max(0.0, ebt_lbo * params["tax_rate"])
 
         nwc       = rev * params["nwc_pct"]
-        delta_nwc = nwc - prev_nwc
-        prev_nwc  = nwc
+        # ✅ FIX: avoid artificial WC release in Year 1
+        if i == 0:
+            delta_nwc = 0
+        else:
+            delta_nwc = nwc - prev_nwc
+        
+        prev_nwc = nwc
         capex     = rev * params["capex_pct"]
-
         fcf   = ebitda_y - interest - tax - capex - delta_nwc
         cash += fcf
 
