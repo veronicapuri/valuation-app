@@ -105,7 +105,7 @@ BS_KEYWORDS = {
     ],
     "Receivables": [
         "receivable", "debtor", "trade receivable", "other receivable",
-        "prepayment", "deposit paid", "advance paid",
+        "trade and other receivables", "prepayment", "deposit paid", "advance paid",
         "amount owing from", "owing from",
         "advance salaries", "raffles deposit",
     ],
@@ -121,7 +121,7 @@ BS_KEYWORDS = {
         "amount owing to director", "director loan",
     ],
     "Payables": [
-        "payable", "creditor", "trade payable", "accrual", "other payable",
+        "payable", "creditor", "trade payable", "accrual", "trade and other payables", "other payable",
         "advance received", "deposit received", "sales tax", "gst", "vat",
         "wages payable", "income tax payable", "regis",
     ],
@@ -454,7 +454,7 @@ _META_EXACT = {"account", "accounts", "nan", "none", ""}
 _META_PHRASES = [
     "pte. ltd.", "pte ltd", "sdn bhd", "berhad",
     "for the year", "for the period",
-    "as at ", "as of ",
+    "as at ", "as of ", "as at",
     "balance sheet", "profit and loss", "income statement",
     "exchange rate", "rates are provided",
     "prepared by", "reviewed by",
@@ -474,6 +474,8 @@ def _is_meta_row(label: str) -> bool:
     if re.fullmatch(r"[\d\s\-/]+", xl):
         return True
     if _DATE_RE.match(xl):
+        return True
+    if "page" in xl:
         return True
     return any(p in xl for p in _META_PHRASES)
 
@@ -541,6 +543,15 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     result = merge_multiline_rows(result)
     return result
 
+def clean_bs_label(label):
+    label = label.lower()
+
+    # Remove section prefixes
+    label = re.sub(r"^current assets\s*", "", label)
+    label = re.sub(r"^current liabilities\s*", "", label)
+    label = re.sub(r"^equity\s*", "", label)
+
+    return label.strip()
 
 # =========================================
 # CLASSIFICATION — P&L
@@ -662,7 +673,7 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
     current_section = None
 
     for item in df["Line Item"].fillna("").astype(str):
-        x   = item.lower().strip()
+        x = clean_bs_label(item)
         cat = "Other"
 
         for trigger, section in BS_SECTION_TRIGGERS.items():
