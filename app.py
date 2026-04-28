@@ -444,13 +444,7 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
 
     confidence, ranked_cols = detect_column_confidence(df)
     
-    # Optional debug
-    st.write("Column ranking:", ranked_cols)
-    st.write("Confidence:", confidence)
     
-    if confidence < 0.15:
-        st.warning("⚠️ Low confidence in detected amount column — please review")
-
     # ── Detect label column ───────────────────────────────────────────────────
     label_col, label_score = None, -1
     for col in df.columns:
