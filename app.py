@@ -381,47 +381,49 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── OCR fallback: handle single-column messy PDFs ─────────────────────────
     if df.shape[1] == 1:
-        raw_col = df.iloc[:, 0].astype(str)
-    
-        def extract_label_and_numbers(text):
-            text = normalize_text_numbers(text)   # 🔥 ADD THIS
-        
-            numbers = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
-            numbers = [n for n in numbers if re.search(r"\d", n)]
-        
-            parsed = []
-            for n in numbers:
-                try:
-                    val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
-                    parsed.append((n, val))
-                except:
+    raw_col = df.iloc[:, 0].astype(str)
+
+    def extract_label_and_amount(text):
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r"^\$\$+", "", text).strip()
+
+        matches = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
+
+        candidates = []
+        for m in matches:
+            try:
+                val = float(
+                    m.replace(",", "")
+                     .replace("(", "-")
+                     .replace(")", "")
+                )
+
+                if abs(val) < 100:
                     continue
-        
-            if not parsed:
-                return [text.strip(), "0"]
-        
-            # Take LAST number (still correct strategy)
-            amount_str, _ = parsed[-1]
-        
-            label = text.replace(amount_str, "")
-            label = re.sub(r"[-–—]+$", "", label)
-            label = re.sub(r"^\$\$+", "", label).strip()
-        
-            return [label, amount_str]
-    
-        rows = raw_col.apply(extract_label_and_numbers)
-    
-        # Find max number of columns needed
-        max_len = rows.apply(len).max()
-    
-        # Pad rows so all same length
-        rows = rows.apply(lambda x: x + [""] * (max_len - len(x)))
-    
-        # Build dataframe
-        df = pd.DataFrame(rows.tolist())
-    
-        # Rename columns → c0 = label, rest = numeric candidates
-        df.columns = [f"c{i}" for i in range(len(df.columns))]
+
+                candidates.append((m, val))
+
+            except:
+                continue
+
+        if not candidates:
+            return text.strip(), "0"
+
+        # 🔥 pick largest number
+        amount_str, _ = max(candidates, key=lambda x: abs(x[1]))
+
+        label = text.replace(amount_str, "")
+        label = re.sub(r"[-–—]+$", "", label).strip()
+
+        return label, amount_str
+
+    # ✅ SIMPLE + CLEAN
+    rows = raw_col.apply(lambda x: pd.Series(extract_label_and_amount(x)))
+
+    df = pd.DataFrame({
+        "c0": rows[0],
+        "c1": rows[1]
+    })
    
     def detect_column_confidence(df):
         scores = {}
