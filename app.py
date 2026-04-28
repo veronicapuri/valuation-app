@@ -333,6 +333,17 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
         def extract_label_and_numbers(text):
             numbers = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
             numbers = [n for n in numbers if re.search(r"\d", n)]
+            
+            # 🔥 NEW: remove small "noise" numbers (like 10, 11, 12)
+            clean_numbers = []
+            for n in numbers:
+                val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
+                
+                # Keep only meaningful financial values
+                if abs(val) >= 0.01 * max_detected_value
+                    clean_numbers.append(n)
+            
+            numbers = clean_numbers
     
             # Remove ALL numbers from label
             label = text
