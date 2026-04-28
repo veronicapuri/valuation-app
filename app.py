@@ -299,31 +299,38 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
     df = dedupe_columns(df)
     df.columns = [f"c{i}" for i in range(len(df.columns))]
 
+
     # ── OCR fallback: handle single-column messy PDFs ─────────────────────────
     if df.shape[1] == 1:
         raw_col = df.iloc[:, 0].astype(str)
     
-        def extract_label_amount(text):
-            # find ALL numbers in the line
+        def extract_label_and_numbers(text):
             numbers = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
+            numbers = [n for n in numbers if re.search(r"\d", n)]
     
-            if not numbers:
-                return text.strip(), "0"
+            # Remove ALL numbers from label
+            label = text
+            for num in numbers:
+                label = label.replace(num, "")
     
-            amount = numbers[-1]  # take LAST number (most reliable)
-            label = text.replace(amount, "").strip()
-    
-            # clean trailing dashes or junk
             label = re.sub(r"[-–—]+$", "", label).strip()
     
-            return label, amount
+            return [label] + numbers  # keep ALL numbers
     
-        split = raw_col.apply(lambda x: pd.Series(extract_label_amount(x)))
+        rows = raw_col.apply(extract_label_and_numbers)
     
-        df = pd.DataFrame({
-            "c0": split[0],
-            "c1": split[1]
-        })
+        # Find max number of columns needed
+        max_len = rows.apply(len).max()
+    
+        # Pad rows so all same length
+        rows = rows.apply(lambda x: x + [""] * (max_len - len(x)))
+    
+        # Build dataframe
+        df = pd.DataFrame(rows.tolist())
+    
+        # Rename columns → c0 = label, rest = numeric candidates
+        df.columns = [f"c{i}" for i in range(len(df.columns))]
+   
 
     # ── Detect amount column ──────────────────────────────────────────────────
     best_col, best_score = None, -1
