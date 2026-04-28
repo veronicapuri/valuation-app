@@ -261,27 +261,34 @@ def parse_amount(series: pd.Series) -> pd.Series:
         .pipe(lambda s: pd.to_numeric(s, errors="coerce"))
         .fillna(0)
     )
-
 def score_amount_column(series):
     nums = parse_amount(series)
 
-    # Ignore zeros
+    # Remove zeros
     nums = nums[nums != 0]
 
     if len(nums) == 0:
         return -1
 
-    # Heuristics:
-    # 1. More non-zero values = good
-    # 2. Larger magnitudes = more likely real financials
-    # 3. Penalize very small numbers (like notes, page numbers)
+    # Key idea:
+    # Real financial column = larger magnitudes + consistency
+
+    median = np.median(np.abs(nums))
+    total  = np.sum(np.abs(nums))
 
     score = (
-        len(nums) * 10
-        + np.log1p(nums.abs()).sum()   # favors large financial numbers
+        len(nums) * 5           # consistency
+        + np.log1p(total) * 2   # total scale (VERY important)
+        + np.log1p(median) * 3  # typical size (VERY important)
     )
 
     return score
+    
+    # Prefer columns with larger median magnitude
+    if best_col:
+        best_vals = parse_amount(df[best_col])
+        if np.median(np.abs(best_vals)) < 1000:
+            st.warning("⚠️ Detected unusually small values — possible wrong column")
 
 # ── Metadata row detection ────────────────────────────────────────────────────
 # Uses explicit phrase matching — NOT substring matching on short tokens like
