@@ -265,6 +265,14 @@ def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = cols
     return df
 
+def normalize_text_numbers(text):
+    # Fix cases like "9 461,377" → "9461,377"
+    text = re.sub(r"(\d)\s+(\d{3},\d{3})", r"\1\2", text)
+
+    # Fix "11 159,835" → "11159,835" (rare but happens)
+    text = re.sub(r"(\d{1,2})\s+(\d{3},\d{3})", r"\1\2", text)
+
+    return text
 
 def parse_amount(series: pd.Series) -> pd.Series:
     return (
@@ -376,52 +384,30 @@ def smart_clean(df: pd.DataFrame) -> pd.DataFrame:
         raw_col = df.iloc[:, 0].astype(str)
     
         def extract_label_and_numbers(text):
+            text = normalize_text_numbers(text)   # 🔥 ADD THIS
+        
             numbers = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
             numbers = [n for n in numbers if re.search(r"\d", n)]
-            
-            # 🔥 NEW: remove small "noise" numbers (like 10, 11, 12)
-            clean_numbers = []
+        
+            parsed = []
             for n in numbers:
-                val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
-                
-                # Keep only meaningful financial values
-                if abs(val) >= 1:
-                    clean_numbers.append(n)
-            
-            numbers = clean_numbers
-    
-            # Remove ALL numbers from label
-            label = text
-            for num in numbers:
-                label = label.replace(num, "")
-    
-            label = re.sub(r"[-–—]+$", "", label).strip()
-    
-            def extract_label_and_numbers(text):
-                numbers = re.findall(r"\(?-?\d[\d,]*\.?\d*\)?", text)
-                numbers = [n for n in numbers if re.search(r"\d", n)]
-            
-                # Convert safely
-                parsed = []
-                for n in numbers:
-                    try:
-                        val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
-                        parsed.append((n, val))
-                    except:
-                        continue
-            
-                if not parsed:
-                    return [text.strip(), "0"]
-            
-                # 🔥 KEY FIX: take LAST meaningful number
-                amount_str, amount_val = parsed[-1]
-            
-                # Remove ONLY that number from label
-                label = text.replace(amount_str, "")
-                label = re.sub(r"[-–—]+$", "", label).strip()
-            
-                return [label, amount_str]
-    
+                try:
+                    val = float(n.replace(",", "").replace("(", "-").replace(")", ""))
+                    parsed.append((n, val))
+                except:
+                    continue
+        
+            if not parsed:
+                return [text.strip(), "0"]
+        
+            # Take LAST number (still correct strategy)
+            amount_str, _ = parsed[-1]
+        
+            label = text.replace(amount_str, "")
+            label = re.sub(r"[-–—]+$", "", label)
+            label = re.sub(r"^\$\$+", "", label).strip()
+        
+            return [label, amount_str]
     
         rows = raw_col.apply(extract_label_and_numbers)
     
