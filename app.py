@@ -80,7 +80,8 @@ PL_KEYWORDS = {
         "exchange gain", "fx gain", "revaluation gain",
     ],
     "Interest": [
-        "interest expense", "finance cost", "finance charge",
+        "interest expense", "finance cost", "finance costs",
+        "finance charge", "bank charge", "bank charges",
         "borrowing cost", "loan interest", "hire purchase interest",
     ],
     "Tax": [
