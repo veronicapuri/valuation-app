@@ -1196,8 +1196,6 @@ with st.sidebar.expander("🤖 AI Classification (optional)"):
     api_key = st.text_input("Anthropic API Key", type="password")
     use_ai  = st.checkbox("Enable AI classification", value=bool(api_key))
 
-st.sidebar.divider()
-
 with st.sidebar.expander("🧹 EBITDA Normalisation (SME add-backs)"):
     st.caption(
         "Add back owner salaries above market rate, one-off items, "
