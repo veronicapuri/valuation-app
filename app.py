@@ -737,7 +737,13 @@ def classify_pl(df: pd.DataFrame, use_ai: bool, api_key: str) -> pd.DataFrame:
 # =============================================================================
 def compute_pl(df: pd.DataFrame, addbacks: float = 0.0) -> dict:
     def s(cat):
-        return df.loc[df["Category"] == cat, "Amount"].sum()
+        val = df.loc[df["Category"] == cat, "Amount"].sum()
+        
+        # Normalize sign for expenses
+        if cat in ["COGS", "OpEx", "D&A", "Interest", "Tax"]:
+            return abs(val)
+        
+        return val
 
     rev  = s("Revenue")
     cogs = s("COGS")
@@ -745,7 +751,7 @@ def compute_pl(df: pd.DataFrame, addbacks: float = 0.0) -> dict:
     da   = s("D&A")
     oi   = s("Other Income")
     int_ = s("Interest")
-    tax  = s("Tax")
+    tax  = abs(s("Tax"))
 
     gp       = rev - cogs
     opex_adj = opex - addbacks          # normalised OpEx
