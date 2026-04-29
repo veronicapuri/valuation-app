@@ -2,27 +2,6 @@
 SME Valuation & LBO Tool
 ========================
 Production-grade Streamlit app for Singapore/SEA SME valuation.
-
-Fixes vs. original:
-  - np.irr() removed in NumPy ≥ 1.17 → replaced with scipy.optimize / Newton-Raphson fallback
-  - IRR edge cases (no sign change, overflow) handled gracefully
-  - params dict missing "use_override_margin" key caused KeyError → always injected
-  - Scenario builder missing "initial_nwc" propagation
-  - NWC delta Y1 wrongly released cash → kept at 0 (original intent) and documented
-  - equity_in <= 0 clamped to 1 (original) but now shows a proper warning
-  - EBITDA Bridge double-counts D&A (EBIT + D&A = EBITDA, then shows D&A add-back
-    separately, which is correct, but labelling was confusing) → clarified
-  - Memory file uses relative path → wrapped in try/except
-  - BS classifier: "interest income" keyword overlaps PL "Other Income" — kept separate
-  - auto_calibrate: leverage_pct could be 0 when ebitda=0 → floored at 0.30
-  - build_scenarios: missing years key passed through correctly
-  - Sensitivity table: grid runs 9 LBOs inline — now cached
-  - Added: IRR %, MOIC waterfall chart, debt paydown chart (Plotly)
-  - Added: export to Excel button
-  - Added: proper page sections with status indicators
-  - Added: Comparable Transactions reference table for SGD SMEs
-  - Improved: auto_calibrate rationale shown inline with expander
-  - Improved: all fmt() calls safe against None / NaN
 """
 
 import streamlit as st
