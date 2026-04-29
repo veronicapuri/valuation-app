@@ -1239,8 +1239,13 @@ if pl_file:
                     f"🧹 **EBITDA normalisation active:** {fmt(total_addbacks)} "
                     "will be added back before computing EBITDA."
                 )
-
-            unknown_count = (df_pl["Category"] == "Unknown").sum()
+              
+            unknown_rows = df_pl[df_pl["Category"] == "Unknown"]
+            
+            # Ignore zero-value noise rows
+            unknown_rows = unknown_rows[unknown_rows["Amount"] != 0]
+            
+            unknown_count = len(unknown_rows)
             if unknown_count:
                 st.warning(
                     f"⚠️ {unknown_count} row(s) unclassified. "
