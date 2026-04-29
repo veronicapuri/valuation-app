@@ -900,7 +900,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         delta_nwc = 0.0 if i == 0 else nwc - prev_nwc
         prev_nwc  = nwc
         capex     = rev * params["capex_pct"]
-        fcf       = ebitda_y - interest - tax - capex - delta_nwc
+        fcf = (ebit_lbo - tax) + da_y - capex - delta_nwc - interest
         cash     += fcf
 
         # Revolver draw if cash below minimum
