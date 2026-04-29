@@ -1170,20 +1170,20 @@ for k, v in _defaults.items():
 st.markdown("""
 <style>
 
-/* FIX toggle button visibility */
-button[kind="header"] {
-    color: white !important;
-    background: transparent !important;
+/* Force sidebar toggle ABOVE everything */
+button[aria-label="Toggle sidebar"] {
+    position: relative !important;
+    z-index: 9999 !important;
 }
 
-/* Ensure icons stay visible */
-button[kind="header"] svg {
-    fill: white !important;
-}
-
-/* Sidebar background */
+/* Also fix parent container layering */
 section[data-testid="stSidebar"] {
-    background: #0f172a;
+    z-index: 999 !important;
+}
+
+/* Ensure main content doesn't overlap */
+.main {
+    z-index: 1 !important;
 }
 
 </style>
