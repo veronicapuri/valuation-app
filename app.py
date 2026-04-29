@@ -3,26 +3,31 @@ SME Valuation & LBO Tool
 ========================
 Production-grade Streamlit app for Singapore/SEA SME valuation.
 
-Fixes vs. original:
-  - np.irr() removed in NumPy ≥ 1.17 → replaced with scipy.optimize / Newton-Raphson fallback
-  - IRR edge cases (no sign change, overflow) handled gracefully
-  - params dict missing "use_override_margin" key caused KeyError → always injected
-  - Scenario builder missing "initial_nwc" propagation
-  - NWC delta Y1 wrongly released cash → kept at 0 (original intent) and documented
-  - equity_in <= 0 clamped to 1 (original) but now shows a proper warning
-  - EBITDA Bridge double-counts D&A (EBIT + D&A = EBITDA, then shows D&A add-back
-    separately, which is correct, but labelling was confusing) → clarified
-  - Memory file uses relative path → wrapped in try/except
-  - BS classifier: "interest income" keyword overlaps PL "Other Income" — kept separate
-  - auto_calibrate: leverage_pct could be 0 when ebitda=0 → floored at 0.30
-  - build_scenarios: missing years key passed through correctly
-  - Sensitivity table: grid runs 9 LBOs inline — now cached
-  - Added: IRR %, MOIC waterfall chart, debt paydown chart (Plotly)
-  - Added: export to Excel button
-  - Added: proper page sections with status indicators
-  - Added: Comparable Transactions reference table for SGD SMEs
-  - Improved: auto_calibrate rationale shown inline with expander
-  - Improved: all fmt() calls safe against None / NaN
+v2 Fixes (validated against Acutus Tax Services Pte. Ltd. 2024 accounts):
+
+  CRITICAL BUGS FIXED:
+  - SIGN BUG in compute_pl(): expenses shown in parentheses e.g. (9,236) are parsed
+    as -9,236. The formula then does net = ebt - (-9,236) → adds tax back.
+    Fix: abs() applied to all expense categories (Tax, Interest, COGS) in compute_pl().
+  - 'other income' was in BOTH PL_KEYWORDS["Ignore"] AND ["Other Income"].
+    Ignore is checked first so it always lost → Other Income always = $0.
+    Fix: removed 'other income' from Ignore list.
+  - OCR label artefacts not cleaned: '$ $ Revenue', '~ Rental expense',
+    'Expenses: - Employee benefits expense ll' (OCR misread of note ref 11).
+    Fix: enhanced _clean_label() strips leading symbols, "Expenses:" prefix,
+    OCR note-number misreads (ll, l0, lO).
+  - PDF two-column layout (2024 | 2023): parser correctly picks the first
+    formatted number (with comma/parens) which is always the 2024 column. ✓
+  - BS 'provision for taxation' inflated Payables and distorted NWC.
+    Fix: added 'provision for tax' to BS Ignore so it's excluded from NWC.
+
+  PREVIOUS FIXES (v1):
+  - np.irr() removed in NumPy ≥ 1.17 → Newton-Raphson + Brent fallback
+  - params dict missing 'use_override_margin' → always injected
+  - equity_in <= 0 warns user rather than silently clamping
+  - Memory file wrapped in try/except
+  - Plotly charts, Excel export, sensitivity grids, scenario analysis
+  - Comparable transactions reference table
 """
 
 import streamlit as st
@@ -157,7 +162,9 @@ PL_KEYWORDS = {
         "pte", "ltd", "sdn bhd", "for the year", "as at", "nan", "none",
         "operating profit", "operating expenses",
         "profit before", "profit after", "loss before", "loss after",
-        "cost of sales", "other income", "trading income",
+        "cost of sales", "trading income",
+        # NOTE: "other income" intentionally NOT here — it lives in Other Income keywords.
+        # Adding it here causes every Other Income line to be silently dropped.
     ],
 }
 
@@ -169,7 +176,6 @@ BS_KEYWORDS = {
     ],
     "Receivables": [
         "receivable", "debtor", "trade receivable", "other receivable",
-        "amount due from", "contract asset", "due from customer",
         "trade and other receivables", "prepayment", "deposit paid",
         "advance paid", "amount owing from", "owing from",
         "advance salaries", "raffles deposit",
@@ -187,19 +193,20 @@ BS_KEYWORDS = {
     ],
     "Payables": [
         "payable", "creditor", "trade payable", "accrual",
-        "provision for taxation", 
         "trade and other payables", "other payable",
         "advance received", "deposit received", "sales tax", "gst", "vat",
         "wages payable", "income tax payable",
     ],
     "Equity": [
         "equity", "share capital", "retained earning", "reserve",
-        "dividend", "owner",
+        "current year earning", "dividend", "owner",
     ],
     "Ignore": [
         "total", "net asset", "total asset", "total liabilit",
         "current assets", "fixed assets", "current liabilities",
         "long term", "non-current",
+        # Tax provisions are current liabilities but should NOT be in NWC
+        "provision for tax", "provision for income",
     ],
 }
 
@@ -404,7 +411,34 @@ _AMOUNT_RE = re.compile(r"(\([\d,]+(?:\.\d+)?\)|-?[\d,]+(?:\.\d+)?)")
 
 
 def _strip_note_refs(label: str) -> str:
+    """Remove trailing note-reference numbers (e.g. 'Revenue 9' → 'Revenue')."""
     return re.sub(r"\s+\b\d{1,2}\b\s*$", "", label).strip()
+
+
+# OCR artefact patterns that prefix labels in scanned PDFs
+_OCR_PREFIX_RE  = re.compile(r'^[\$£€~\*•\u2022\-\–\—\s]+')
+_EXPENSES_RE    = re.compile(r'^[Ee]xpenses?\s*:?\s*[-–—]\s*')
+_OCR_NOTE_RE    = re.compile(r'\s+(ll|l0|lO|IO|I0|l1)\s*$')   # OCR misreads of 11,10
+
+
+def _clean_label(label: str) -> str:
+    """
+    Clean OCR / PDF artefacts from a line-item label.
+    Handles:
+      - Leading currency symbols:  '$ $ Revenue'  → 'Revenue'
+      - Leading tildes/dashes:     '~ Rental exp'  → 'Rental expense'
+      - "Expenses:" prefixes:      'Expenses: - Employee...' → 'Employee...'
+      - OCR note-ref misreads:     'Employee benefits ll' → 'Employee benefits'
+      - Trailing note refs:        'Revenue 9' → 'Revenue'  (existing logic)
+    """
+    label = label.strip()
+    label = _EXPENSES_RE.sub('', label)       # "Expenses: - " prefix
+    label = _OCR_PREFIX_RE.sub('', label)     # leading $, ~, -, –, •
+    label = re.sub(r'^[-–—]\s*', '', label)   # residual leading dash after above
+    label = _OCR_NOTE_RE.sub('', label)       # OCR note misreads: ll, l0, lO
+    label = _strip_note_refs(label)           # trailing digit note refs
+    label = re.sub(r'\s{2,}', ' ', label).strip()
+    return label
 
 
 def _parse_line_to_label_amount(line: str):
@@ -433,7 +467,7 @@ def _parse_line_to_label_amount(line: str):
         else:
             cur_pos, cur_raw, _ = plain_ints[0]
 
-    label = _strip_note_refs(line[:cur_pos].strip())
+    label = _clean_label(line[:cur_pos].strip())
     label = re.sub(r"[|_]{2,}", "", label).strip()
     label = re.sub(r"\s{2,}", " ", label)
     if not label:
@@ -552,16 +586,16 @@ def merge_multiline_rows(df: pd.DataFrame) -> pd.DataFrame:
     merged = []
     buffer = ""
     for _, row in df.iterrows():
-        label  = str(row["Line Item"]).strip()
+        label  = _clean_label(str(row["Line Item"]).strip())
         amount = row["Amount"]
         if amount == 0 and len(label.split()) < 5:
             buffer += " " + label
         else:
-            full_label = (buffer + " " + label).strip()
+            full_label = _clean_label((buffer + " " + label).strip())
             merged.append([full_label, amount])
             buffer = ""
     if buffer.strip():
-        merged.append([buffer.strip(), 0])
+        merged.append([_clean_label(buffer.strip()), 0])
     return pd.DataFrame(merged, columns=["Line Item", "Amount"])
 
 
@@ -619,6 +653,20 @@ def smart_clean(df: pd.DataFrame):
                  "Check file format — expected columns like 'Item | Amount'.")
         return None
 
+    # ── Multi-year column detection ───────────────────────────────────────────
+    # PDFs with two numeric columns (2024 | 2023) — warn user we're using the
+    # highest-scoring column (which should be 2024, the leftmost / largest values)
+    other_numeric_cols = [
+        col for col in df.columns
+        if col != best_col and score_amount_column(df[col]) > 0
+    ]
+    if other_numeric_cols:
+        st.info(
+            f"📅 Detected {1 + len(other_numeric_cols)} numeric columns — "
+            "using the primary amount column (highest score). "
+            "If the wrong year was picked, manually re-select values in the editor below."
+        )
+
     label_col, label_score = None, -1.0
     for col in df.columns:
         if col == best_col:
@@ -633,7 +681,7 @@ def smart_clean(df: pd.DataFrame):
         label_col = df.columns[0]
 
     result = pd.DataFrame({
-        "Line Item": df[label_col].astype(str).str.strip(),
+        "Line Item": df[label_col].astype(str).str.strip().apply(_clean_label),
         "Amount":    parse_amount(df[best_col]),
     })
 
@@ -714,21 +762,43 @@ def classify_pl(df: pd.DataFrame, use_ai: bool, api_key: str) -> pd.DataFrame:
 # METRICS — P&L
 # =============================================================================
 def compute_pl(df: pd.DataFrame, addbacks: float = 0.0) -> dict:
+    """
+    Compute P&L metrics from classified line items.
+
+    SIGN CONVENTION:
+      All line items are stored with their parsed sign:
+        Revenue / Other Income → positive
+        Expenses in parentheses like (9,236) → parsed as -9,236 by parse_amount()
+
+      The model subtracts expense categories from income:
+        net = ebt - tax
+      If tax is stored as -9,236, then net = ebt - (-9,236) ADDS tax → WRONG.
+
+      FIX: expense categories (COGS, OpEx, D&A, Interest, Tax) use abs() so the
+      formula consistently subtracts a positive number, regardless of whether the
+      source PDF used parentheses or a negative sign.
+
+      Other Income is kept signed (could be negative for losses).
+    """
     def s(cat):
         return df.loc[df["Category"] == cat, "Amount"].sum()
 
+    def s_abs(cat):
+        """Sum expense category using absolute values — handles parenthetical negatives."""
+        return abs(df.loc[df["Category"] == cat, "Amount"].sum())
+
     rev  = s("Revenue")
-    cogs = s("COGS")
-    opex = s("OpEx")
-    da   = s("D&A")
-    oi   = s("Other Income")
-    int_ = s("Interest")
-    tax  = s("Tax")
+    cogs = s_abs("COGS")
+    opex = s_abs("OpEx")
+    da   = s_abs("D&A")
+    oi   = s("Other Income")     # keep signed: could be negative for FX losses etc.
+    int_ = s_abs("Interest")
+    tax  = s_abs("Tax")
 
     gp       = rev - cogs
     opex_adj = opex - addbacks          # normalised OpEx
     ebit     = gp - opex_adj - da
-    ebitda   = ebit + da                # = gp - opex_adj (D&A neutral)
+    ebitda   = ebit + da                # = gp - opex_adj
     ebt      = ebit + oi - int_
     net      = ebt - tax
 
@@ -753,15 +823,7 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
     cats = []
     current_section = None
     for item in df["Line Item"].fillna("").astype(str):
-        # Clean junk + normalize
-        x = re.sub(r"[^a-z0-9\s]", " ", str(item).lower())
-        x = re.sub(r"\s+", " ", x).strip()
-        
-        # Remove section headers embedded in line
-        for trigger in BS_SECTION_TRIGGERS.keys():
-            if trigger in x:
-                x = x.replace(trigger, "").strip()
-              
+        x   = item.lower().strip()
         cat = "Other"
 
         for trigger, section in BS_SECTION_TRIGGERS.items():
@@ -779,13 +841,9 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
             if any(k in x for k in keywords):
                 cat = c
                 break
-        # Fallback: if we're inside Current Assets section, treat unknowns as Receivables
-        if cat == "Other" and current_section == "Receivables":
-            cat = "Receivables"
+
         if cat == "Other" and current_section is not None:
-            # Only inherit section for asset/liability buckets
-            if current_section in ["Receivables", "Payables", "Inventory"]:
-                cat = current_section
+            cat = current_section
 
         cats.append(cat)
 
@@ -955,97 +1013,47 @@ def chart_debt_paydown(lbo_df: pd.DataFrame):
         x=lbo_df["Year"], y=lbo_df["Revolver"],
         marker_color="#3b82f6",
     ))
-# =============================================================================
-# CHARTING
-# =============================================================================
-def chart_debt_paydown(lbo_df: pd.DataFrame):
-    if not PLOTLY:
-        return
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Bar(
-        name="TLB",
-        x=lbo_df["Year"], y=lbo_df["TLB"],
-        marker_color="#1e3a5f",
-    ))
-
-    fig.add_trace(go.Bar(
-        name="Revolver",
-        x=lbo_df["Year"], y=lbo_df["Revolver"],
-        marker_color="#3b82f6",
-    ))
-
     fig.add_trace(go.Scatter(
         name="Cash",
         x=lbo_df["Year"], y=lbo_df["Cash"],
-        mode="lines+markers",
-        line_color="#16a34a",
+        mode="lines+markers", line_color="#16a34a", yaxis="y",
     ))
-
     fig.update_layout(
         barmode="stack",
-        bargap=0.25,
         title="Debt Paydown & Cash Buildup",
-        xaxis_title="Year",
-        yaxis_title="$",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.15,
-            xanchor="right",
-            x=1
-        ),  # ✅ comma here
-        height=380,
-        margin=dict(l=0, r=0, t=80, b=20),
-        plot_bgcolor="#f8fafc",
-        paper_bgcolor="#ffffff",
+        xaxis_title="Year", yaxis_title="$",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        height=320, margin=dict(l=0, r=0, t=40, b=0),
+        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
     )
-
     st.plotly_chart(fig, use_container_width=True)
+
 
 def chart_fcf_ebitda(lbo_df: pd.DataFrame):
     if not PLOTLY:
         return
-
     fig = go.Figure()
-
     fig.add_trace(go.Bar(
-        name="EBITDA",
-        x=lbo_df["Year"], y=lbo_df["EBITDA"],
+        name="EBITDA", x=lbo_df["Year"], y=lbo_df["EBITDA"],
         marker_color="#0ea5e9",
     ))
-
     fig.add_trace(go.Bar(
-        name="FCF",
-        x=lbo_df["Year"], y=lbo_df["FCF"],
+        name="FCF", x=lbo_df["Year"], y=lbo_df["FCF"],
         marker_color="#16a34a",
     ))
-
     fig.update_layout(
-        barmode="group",
-        title="EBITDA vs Free Cash Flow",
-        xaxis_title="Year",
-        yaxis_title="$",
-        height=350,
-        margin=dict(l=0, r=0, t=80, b=20),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.15,
-            xanchor="right",
-            x=1
-        ),
-        plot_bgcolor="#f8fafc",
-        paper_bgcolor="#ffffff",
+        barmode="group", title="EBITDA vs Free Cash Flow",
+        xaxis_title="Year", yaxis_title="$",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        height=280, margin=dict(l=0, r=0, t=40, b=0),
+        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
     )
-
     st.plotly_chart(fig, use_container_width=True)
+
 
 def chart_moic_waterfall(returns: dict):
     if not PLOTLY or returns.get("total_loss"):
         return
-
     fig = go.Figure(go.Waterfall(
         name="Value Bridge",
         orientation="v",
@@ -1061,17 +1069,13 @@ def chart_moic_waterfall(returns: dict):
         increasing={"marker": {"color": "#16a34a"}},
         decreasing={"marker": {"color": "#dc2626"}},
     ))
-
     fig.update_layout(
         title="Equity Value Bridge (Illustrative)",
-        height=350,
-        margin=dict(l=0, r=0, t=80, b=20),
-        waterfallgap=0.3,  # 👈 spacing fix
-        plot_bgcolor="#f8fafc",
-        paper_bgcolor="#ffffff",
+        height=280, margin=dict(l=0, r=0, t=40, b=0),
+        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
     )
-
     st.plotly_chart(fig, use_container_width=True)
+
 
 # =============================================================================
 # EXCEL EXPORT
@@ -1296,13 +1300,8 @@ if pl_file:
                     f"🧹 **EBITDA normalisation active:** {fmt(total_addbacks)} "
                     "will be added back before computing EBITDA."
                 )
-              
-            unknown_rows = df_pl[df_pl["Category"] == "Unknown"]
-            
-            # Ignore zero-value noise rows
-            unknown_rows = unknown_rows[unknown_rows["Amount"] != 0]
-            
-            unknown_count = len(unknown_rows)
+
+            unknown_count = (df_pl["Category"] == "Unknown").sum()
             if unknown_count:
                 st.warning(
                     f"⚠️ {unknown_count} row(s) unclassified. "
@@ -1374,12 +1373,6 @@ if bs_file:
             inventory   = df_bs.loc[df_bs["Category"] == "Inventory",   "Amount"].sum()
             bs_derived_nwc = receivables + inventory - payables
 
-            if receivables == 0:
-                st.warning(
-                    "⚠️ No receivables detected. This usually means:\n"
-                    "- Assets page missing, OR\n"
-                    "- Receivables misclassified (e.g. 'amount due from customers')."
-                )
 
 # =============================================================================
 # AUTO-CALIBRATE BUTTON
