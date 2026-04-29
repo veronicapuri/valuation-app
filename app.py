@@ -922,11 +922,27 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
             revolver += draw
             cash     += draw
 
-        # Cash sweep: revolver first, then TLB
-        excess   = max(0.0, cash - params["min_cash"])
-        pay_rev  = min(revolver, excess); revolver -= pay_rev; cash -= pay_rev
-        excess   = max(0.0, cash - params["min_cash"])
-        pay_tlb  = min(tlb, excess);     tlb      -= pay_tlb; cash -= pay_tlb
+        # Cash sweep: revolver first, then TLB (PARTIAL sweep)
+        sweep_pct = params.get("debt_sweep_pct", 0.6)  # 👈 key fix
+        
+        excess = max(0.0, cash - params["min_cash"])
+        sweep  = excess * sweep_pct
+
+        # pay revolver first
+        pay_rev = min(revolver, sweep)
+        revolver -= pay_rev
+        cash -= pay_rev
+        
+        # remaining sweep goes to TLB
+        sweep -= pay_rev
+        
+        pay_tlb = min(tlb, sweep)
+        tlb -= pay_tlb
+        cash -= pay_tlb   # 👈 YOU MISSED THIS LINE
+        
+        # cap excess cash
+        max_cash = 0.1 * rev
+        cash = min(cash, max_cash)
 
         rows.append({
             "Year":          i + 1,
