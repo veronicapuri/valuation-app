@@ -1185,6 +1185,14 @@ for k, v in _defaults.items():
 # =============================================================================
 # SIDEBAR
 # =============================================================================
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] > div:first-child {
+    padding-top: 0.5rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.sidebar.subheader("⚙️ Deal Parameters")
 
 with st.sidebar.expander("🤖 AI Classification (optional)"):
