@@ -921,6 +921,8 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         excess    = max(0.0, cash - params["min_cash"])
         pay_tlb   = min(tlb, excess);     tlb      -= pay_tlb; cash -= pay_tlb
 
+        debt_repaid = pay_rev + pay_tlb
+
         rows.append({
             "Year":         i + 1,
             "Revenue":      rev,
