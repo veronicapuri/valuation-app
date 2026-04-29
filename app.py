@@ -89,11 +89,6 @@ def classify_simple(label):
     # everything else = OpEx
     return "OpEx"
 
-st.subheader("Category Summary")
-
-summary = df.groupby("Category")["Amount"].sum()
-st.write(summary)
-
 # =========================
 # METRICS
 # =========================
@@ -138,7 +133,10 @@ if file:
         },
         use_container_width=True
     )
-
+    st.subheader("Category Summary")
+    summary = df.groupby("Category")["Amount"].sum()
+    st.write(summary)
+    
     # =========================
     # NORMALISATION
     # =========================
