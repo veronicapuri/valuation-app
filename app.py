@@ -954,48 +954,97 @@ def chart_debt_paydown(lbo_df: pd.DataFrame):
         name="Revolver",
         x=lbo_df["Year"], y=lbo_df["Revolver"],
         marker_color="#3b82f6",
+# =============================================================================
+# CHARTING
+# =============================================================================
+def chart_debt_paydown(lbo_df: pd.DataFrame):
+    if not PLOTLY:
+        return
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        name="TLB",
+        x=lbo_df["Year"], y=lbo_df["TLB"],
+        marker_color="#1e3a5f",
     ))
+
+    fig.add_trace(go.Bar(
+        name="Revolver",
+        x=lbo_df["Year"], y=lbo_df["Revolver"],
+        marker_color="#3b82f6",
+    ))
+
     fig.add_trace(go.Scatter(
         name="Cash",
         x=lbo_df["Year"], y=lbo_df["Cash"],
-        mode="lines+markers", line_color="#16a34a", yaxis="y",
+        mode="lines+markers",
+        line_color="#16a34a",
     ))
+
     fig.update_layout(
         barmode="stack",
+        bargap=0.25,
         title="Debt Paydown & Cash Buildup",
-        xaxis_title="Year", yaxis_title="$",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        height=320, margin=dict(l=0, r=0, t=40, b=0),
-        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
+        xaxis_title="Year",
+        yaxis_title="$",
+        height=380,
+        margin=dict(l=0, r=0, t=80, b=20),  # 👈 FIXED
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.15,
+            xanchor="right",
+            x=1
+        ),
+        plot_bgcolor="#f8fafc",
+        paper_bgcolor="#ffffff",
     )
-    st.plotly_chart(fig, use_container_width=True)
 
+    st.plotly_chart(fig, use_container_width=True)
 
 def chart_fcf_ebitda(lbo_df: pd.DataFrame):
     if not PLOTLY:
         return
+
     fig = go.Figure()
+
     fig.add_trace(go.Bar(
-        name="EBITDA", x=lbo_df["Year"], y=lbo_df["EBITDA"],
+        name="EBITDA",
+        x=lbo_df["Year"], y=lbo_df["EBITDA"],
         marker_color="#0ea5e9",
     ))
+
     fig.add_trace(go.Bar(
-        name="FCF", x=lbo_df["Year"], y=lbo_df["FCF"],
+        name="FCF",
+        x=lbo_df["Year"], y=lbo_df["FCF"],
         marker_color="#16a34a",
     ))
-    fig.update_layout(
-        barmode="group", title="EBITDA vs Free Cash Flow",
-        xaxis_title="Year", yaxis_title="$",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        height=280, margin=dict(l=0, r=0, t=40, b=0),
-        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
+    fig.update_layout(
+        barmode="group",
+        title="EBITDA vs Free Cash Flow",
+        xaxis_title="Year",
+        yaxis_title="$",
+        height=350,
+        margin=dict(l=0, r=0, t=80, b=20),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.15,
+            xanchor="right",
+            x=1
+        ),
+        plot_bgcolor="#f8fafc",
+        paper_bgcolor="#ffffff",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 def chart_moic_waterfall(returns: dict):
     if not PLOTLY or returns.get("total_loss"):
         return
+
     fig = go.Figure(go.Waterfall(
         name="Value Bridge",
         orientation="v",
@@ -1011,13 +1060,17 @@ def chart_moic_waterfall(returns: dict):
         increasing={"marker": {"color": "#16a34a"}},
         decreasing={"marker": {"color": "#dc2626"}},
     ))
+
     fig.update_layout(
         title="Equity Value Bridge (Illustrative)",
-        height=280, margin=dict(l=0, r=0, t=40, b=0),
-        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
+        height=350,
+        margin=dict(l=0, r=0, t=80, b=20),
+        waterfallgap=0.3,  # 👈 spacing fix
+        plot_bgcolor="#f8fafc",
+        paper_bgcolor="#ffffff",
     )
-    st.plotly_chart(fig, use_container_width=True)
 
+    st.plotly_chart(fig, use_container_width=True)
 
 # =============================================================================
 # EXCEL EXPORT
