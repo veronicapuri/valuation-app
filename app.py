@@ -1622,6 +1622,22 @@ if pl_metrics:
         else:
             st.error(f"❌ IRR of {irr_str} — below PE hurdle rate. Re-examine deal structure.")
 
+        # ── Investor View — Cash vs Debt ─────────────────────────────
+        st.subheader("💰 Investor View — Your Investment")
+
+        entry_ev = returns["Entry EV"]
+        equity_in = returns["Equity In"]
+        debt_used = entry_ev - equity_in
+
+        c1, c2 = st.columns(2)
+        c1.metric("💵 Your Cash Invested", fmt(equity_in))
+        c2.metric("🏦 Debt Financing", fmt(debt_used))
+
+        if entry_ev > 0:
+                st.caption(
+                    f"Funding mix: {equity_in/entry_ev:.0%} equity | {debt_used/entry_ev:.0%} debt"
+                )
+                  
         # ── Charts ────────────────────────────────────────────────────────────
         if PLOTLY:
             ch1, ch2 = st.columns(2)
