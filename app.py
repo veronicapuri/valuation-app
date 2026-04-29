@@ -187,13 +187,14 @@ BS_KEYWORDS = {
     ],
     "Payables": [
         "payable", "creditor", "trade payable", "accrual",
+        "provision for taxation", 
         "trade and other payables", "other payable",
         "advance received", "deposit received", "sales tax", "gst", "vat",
         "wages payable", "income tax payable",
     ],
     "Equity": [
         "equity", "share capital", "retained earning", "reserve",
-        "current year earning", "dividend", "owner",
+        "dividend", "owner",
     ],
     "Ignore": [
         "total", "net asset", "total asset", "total liabilit",
@@ -756,10 +757,11 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
         x = re.sub(r"[^a-z0-9\s]", " ", str(item).lower())
         x = re.sub(r"\s+", " ", x).strip()
         
-        # 🚨 REMOVE section headers embedded in same line
+        # Remove section headers embedded in line
         for trigger in BS_SECTION_TRIGGERS.keys():
-            if x.startswith(trigger):
+            if trigger in x:
                 x = x.replace(trigger, "").strip()
+              
         cat = "Other"
 
         for trigger, section in BS_SECTION_TRIGGERS.items():
@@ -780,9 +782,10 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
         # Fallback: if we're inside Current Assets section, treat unknowns as Receivables
         if cat == "Other" and current_section == "Receivables":
             cat = "Receivables"
-
         if cat == "Other" and current_section is not None:
-            cat = current_section
+            # Only inherit section for asset/liability buckets
+            if current_section in ["Receivables", "Payables", "Inventory"]:
+                cat = current_section
 
         cats.append(cat)
 
