@@ -40,6 +40,59 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 st.set_page_config(layout="wide", page_title="SME Valuation Tool", page_icon="📊")
 
+st.markdown("""
+<style>
+
+/* Metric cards */
+[data-testid="metric-container"] {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px 16px;
+}
+
+[data-testid="stMetricValue"] {
+    font-size: 1.4rem !important;
+}
+
+/* IRR colors */
+.irr-good  { color: #16a34a; font-weight: 700; }
+.irr-warn  { color: #d97706; font-weight: 700; }
+.irr-bad   { color: #dc2626; font-weight: 700; }
+
+/* Section headers */
+.section-badge {
+    display: inline-block;
+    background: #1e3a5f;
+    color: white;
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color: #0f172a;
+}
+
+/* Sidebar text */
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span {
+    color: #e2e8f0;
+}
+
+/* Secondary labels */
+section[data-testid="stSidebar"] .stSelectbox label,
+section[data-testid="stSidebar"] .stSlider label {
+    color: #94a3b8;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
 # ── Custom CSS ─────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -68,7 +121,6 @@ st.markdown("""
     }
     /* Sidebar tweak */
     section[data-testid="stSidebar"] { background: #0f172a; }
-    section[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
     section[data-testid="stSidebar"] .stSelectbox label,
     section[data-testid="stSidebar"] .stSlider label { color: #94a3b8 !important; }
 </style>
