@@ -1367,25 +1367,19 @@ if pl_file:
                     f"⚠️ {unknown_count} row(s) unclassified. "
                     "Fix them below or enable AI Classification in the sidebar."
                 )
-
+              
             df_display = df_pl.copy()
             
-            # Flip sign ONLY for display
-            df_display.loc[df_display["Category"] == "Tax", "Amount"] = (
-                df_display.loc[df_display["Category"] == "Tax", "Amount"].abs()
-            )
+            # Ensure numeric (fix OCR issues)
+            df_display["Amount"] = pd.to_numeric(df_display["Amount"], errors="coerce")
             
-            df_pl = st.data_editor(
+            # Flip sign ONLY for Tax (display only)
+            mask = df_display["Category"] == "Tax"
+            df_display.loc[mask, "Amount"] = df_display.loc[mask, "Amount"].abs()
+            
+            df_edited = st.data_editor(
                 df_display,
-                df_pl,
-                column_config={
-                    "Category": st.column_config.SelectboxColumn(
-                        "Category", options=PL_CATEGORIES
-                    ),
-                    "Amount": st.column_config.NumberColumn("Amount", format="$ %.0f"),
-                },
                 use_container_width=True,
-                hide_index=True,
                 num_rows="fixed",
             )
 
