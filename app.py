@@ -1185,7 +1185,7 @@ for k, v in _defaults.items():
 # =============================================================================
 # SIDEBAR
 # =============================================================================
-st.sidebar.markdown("## ⚙️ Deal Parameters")
+st.sidebar.subheader("⚙️ Deal Parameters")
 
 with st.sidebar.expander("🤖 AI Classification (optional)"):
     st.caption(
@@ -1196,7 +1196,7 @@ with st.sidebar.expander("🤖 AI Classification (optional)"):
     api_key = st.text_input("Anthropic API Key", type="password")
     use_ai  = st.checkbox("Enable AI classification", value=bool(api_key))
 
-st.sidebar.markdown("---")
+st.sidebar.divider()
 
 with st.sidebar.expander("🧹 EBITDA Normalisation (SME add-backs)"):
     st.caption(
