@@ -137,8 +137,6 @@ PL_KEYWORDS = {
         "operating profit", "operating expenses",
         "profit before", "profit after", "loss before", "loss after",
         "cost of sales", "trading income",
-        # NOTE: "other income" intentionally NOT here — it lives in Other Income keywords.
-        # Adding it here causes every Other Income line to be silently dropped.
     ],
 }
 
@@ -150,6 +148,7 @@ BS_KEYWORDS = {
     ],
     "Receivables": [
         "receivable", "debtor", "trade receivable", "other receivable",
+        "amount due from", "contract asset", "due from customer",
         "trade and other receivables", "prepayment", "deposit paid",
         "advance paid", "amount owing from", "owing from",
         "advance salaries", "raffles deposit",
@@ -167,20 +166,19 @@ BS_KEYWORDS = {
     ],
     "Payables": [
         "payable", "creditor", "trade payable", "accrual",
+        "provision for taxation", 
         "trade and other payables", "other payable",
         "advance received", "deposit received", "sales tax", "gst", "vat",
         "wages payable", "income tax payable",
     ],
     "Equity": [
         "equity", "share capital", "retained earning", "reserve",
-        "current year earning", "dividend", "owner",
+        "dividend", "owner",
     ],
     "Ignore": [
         "total", "net asset", "total asset", "total liabilit",
         "current assets", "fixed assets", "current liabilities",
         "long term", "non-current",
-        # Tax provisions are current liabilities but should NOT be in NWC
-        "provision for tax", "provision for income",
     ],
 }
 
@@ -269,15 +267,19 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     net_debt = max(0.0, debt_bs - cash_bs)
 
     # ── Entry multiple ────────────────────────────────────────────────────────
-    if   rev < 500_000:      base_entry = 2.5
+    if   rev < 500_000:      base_entry = 2.0
     elif rev < 2_000_000:    base_entry = 3.5
     elif rev < 10_000_000:   base_entry = 5.0
     else:                    base_entry = 6.5
 
-    if   margin >= 0.30:  margin_adj = +1.0
-    elif margin >= 0.20:  margin_adj = +0.5
-    elif margin >= 0.10:  margin_adj =  0.0
-    else:                 margin_adj = -0.5
+    if margin >= 0.30:
+        margin_adj = +0.5 if rev < 1_000_000 else +1.0
+    elif margin >= 0.20:
+        margin_adj = +0.5
+    elif margin >= 0.10:
+        margin_adj = 0.0
+    else:
+        margin_adj = -0.5
 
     leverage_ratio = (net_debt / ebitda) if ebitda > 0 else 0
     lev_adj = -0.5 if leverage_ratio > 3 else 0.0
@@ -286,7 +288,10 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     entry = max(2.5, min(10.0, entry))
 
     # ── Exit multiple ─────────────────────────────────────────────────────────
-    exit_ = round(min(12.0, max(entry + 0.5, entry + 1.5)), 1)
+    if rev < 1_000_000:
+        exit_ = round(entry + 0.5, 1)
+    else:
+        exit_ = round(entry + 1.0, 1)
 
     # ── Revenue growth ────────────────────────────────────────────────────────
     if   rev < 1_000_000:  growth = 0.08
@@ -294,13 +299,24 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     else:                  growth = 0.15
 
     # ── Target EBITDA margin (exit year) ─────────────────────────────────────
-    target_margin = round(min(0.45, max(0.10, margin + 0.05)), 3)
+    if margin < 0.20:
+        target_margin = margin + 0.05
+    elif margin < 0.30:
+        target_margin = margin + 0.03
+    else:
+        target_margin = margin + 0.01   # 👈 high-margin businesses get little uplift
+    
+    target_margin = round(min(0.45, max(0.10, target_margin)), 3)
 
     # ── Leverage ──────────────────────────────────────────────────────────────
     # Max debt at entry = lesser of 3× EBITDA or 65% of entry EV
     entry_ev  = entry * ebitda if ebitda > 0 else 1
-    max_debt  = min(ebitda * 3.0, 0.65 * entry_ev) if ebitda > 0 else 0
-    leverage  = round(max(0.30, min(0.65, max_debt / entry_ev)), 2)
+    if rev < 1_000_000:
+        max_debt = min(ebitda * 2.0, 0.50 * entry_ev)
+        leverage = round(max(0.25, min(0.50, max_debt / entry_ev)), 2)
+    else:
+        max_debt = min(ebitda * 3.0, 0.65 * entry_ev)
+        leverage = round(max(0.30, min(0.65, max_debt / entry_ev)), 2)
 
     # ── CapEx / NWC ───────────────────────────────────────────────────────────
     capex = 0.03 if margin >= 0.25 else 0.06
@@ -326,30 +342,30 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
 
 def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
                     base_params: dict) -> dict:
-    """
-    Bear / Base / Bull scenarios pivot from the CURRENT user model parameters,
-    not from auto_calibrate. This means the Base scenario exactly matches what
-    the user sees in the 'Current Parameters' section.
-    """
-    years       = base_params.get("years", 5)
+    """Bear / Base / Bull scenarios derived from current model assumptions."""
+    years = base_params.get("years", 5)
     base_margin = base_params["margins"][0]
 
     def _make(entry_d, exit_d, growth_d, margin_d, lev_d, capex_d, nwc_d):
         return {
             **base_params,
-            "entry_multiple": round(max(2.0, base_params["entry_multiple"] + entry_d), 1),
-            "exit_multiple":  round(max(2.0, base_params["exit_multiple"]  + exit_d),  1),
-            "growth":         max(0.0, base_params["growth"]        + growth_d),
-            "margins":        [round(max(0.05, base_margin         + margin_d), 3)] * years,
+            "entry_multiple": round(base_params["entry_multiple"] + entry_d, 1),
+            "exit_multiple":  round(base_params["exit_multiple"]  + exit_d, 1),
+            "growth":         max(0.0, base_params["growth"] + growth_d),
+            "margins": [round(max(0.05, base_margin + margin_d), 3)] * years,
             "leverage_pct":   round(min(0.75, max(0.20, base_params["leverage_pct"] + lev_d)), 2),
             "capex_pct":      round(max(0.01, base_params["capex_pct"] + capex_d), 3),
-            "nwc_pct":        round(max(0.01, base_params["nwc_pct"]   + nwc_d),   3),
+            "nwc_pct":        round(max(0.01, base_params["nwc_pct"] + nwc_d), 3),
             "use_override_margin": True,
         }
 
     return {
+
         "Bear 🐻": _make(+0.5, -0.5, -0.03, -0.02, +0.08, +0.02, +0.02),
-        "Base 📊": {**base_params, "use_override_margin": True},
+        "Base 📊": {
+            **base_params,
+            "use_override_margin": True,
+        },
         "Bull 🚀": _make(-0.5, +0.5, +0.03, +0.03, -0.05, -0.01, -0.02),
     }
 
@@ -389,34 +405,7 @@ _AMOUNT_RE = re.compile(r"(\([\d,]+(?:\.\d+)?\)|-?[\d,]+(?:\.\d+)?)")
 
 
 def _strip_note_refs(label: str) -> str:
-    """Remove trailing note-reference numbers (e.g. 'Revenue 9' → 'Revenue')."""
     return re.sub(r"\s+\b\d{1,2}\b\s*$", "", label).strip()
-
-
-# OCR artefact patterns that prefix labels in scanned PDFs
-_OCR_PREFIX_RE  = re.compile(r'^[\$£€~\*•\u2022\-\–\—\s]+')
-_EXPENSES_RE    = re.compile(r'^[Ee]xpenses?\s*:?\s*[-–—]\s*')
-_OCR_NOTE_RE    = re.compile(r'\s+(ll|l0|lO|IO|I0|l1)\s*$')   # OCR misreads of 11,10
-
-
-def _clean_label(label: str) -> str:
-    """
-    Clean OCR / PDF artefacts from a line-item label.
-    Handles:
-      - Leading currency symbols:  '$ $ Revenue'  → 'Revenue'
-      - Leading tildes/dashes:     '~ Rental exp'  → 'Rental expense'
-      - "Expenses:" prefixes:      'Expenses: - Employee...' → 'Employee...'
-      - OCR note-ref misreads:     'Employee benefits ll' → 'Employee benefits'
-      - Trailing note refs:        'Revenue 9' → 'Revenue'  (existing logic)
-    """
-    label = label.strip()
-    label = _EXPENSES_RE.sub('', label)       # "Expenses: - " prefix
-    label = _OCR_PREFIX_RE.sub('', label)     # leading $, ~, -, –, •
-    label = re.sub(r'^[-–—]\s*', '', label)   # residual leading dash after above
-    label = _OCR_NOTE_RE.sub('', label)       # OCR note misreads: ll, l0, lO
-    label = _strip_note_refs(label)           # trailing digit note refs
-    label = re.sub(r'\s{2,}', ' ', label).strip()
-    return label
 
 
 def _parse_line_to_label_amount(line: str):
@@ -445,7 +434,7 @@ def _parse_line_to_label_amount(line: str):
         else:
             cur_pos, cur_raw, _ = plain_ints[0]
 
-    label = _clean_label(line[:cur_pos].strip())
+    label = _strip_note_refs(line[:cur_pos].strip())
     label = re.sub(r"[|_]{2,}", "", label).strip()
     label = re.sub(r"\s{2,}", " ", label)
     if not label:
@@ -564,16 +553,16 @@ def merge_multiline_rows(df: pd.DataFrame) -> pd.DataFrame:
     merged = []
     buffer = ""
     for _, row in df.iterrows():
-        label  = _clean_label(str(row["Line Item"]).strip())
+        label  = str(row["Line Item"]).strip()
         amount = row["Amount"]
         if amount == 0 and len(label.split()) < 5:
             buffer += " " + label
         else:
-            full_label = _clean_label((buffer + " " + label).strip())
+            full_label = (buffer + " " + label).strip()
             merged.append([full_label, amount])
             buffer = ""
     if buffer.strip():
-        merged.append([_clean_label(buffer.strip()), 0])
+        merged.append([buffer.strip(), 0])
     return pd.DataFrame(merged, columns=["Line Item", "Amount"])
 
 
@@ -631,20 +620,6 @@ def smart_clean(df: pd.DataFrame):
                  "Check file format — expected columns like 'Item | Amount'.")
         return None
 
-    # ── Multi-year column detection ───────────────────────────────────────────
-    # PDFs with two numeric columns (2024 | 2023) — warn user we're using the
-    # highest-scoring column (which should be 2024, the leftmost / largest values)
-    other_numeric_cols = [
-        col for col in df.columns
-        if col != best_col and score_amount_column(df[col]) > 0
-    ]
-    if other_numeric_cols:
-        st.info(
-            f"📅 Detected {1 + len(other_numeric_cols)} numeric columns — "
-            "using the primary amount column (highest score). "
-            "If the wrong year was picked, manually re-select values in the editor below."
-        )
-
     label_col, label_score = None, -1.0
     for col in df.columns:
         if col == best_col:
@@ -659,7 +634,7 @@ def smart_clean(df: pd.DataFrame):
         label_col = df.columns[0]
 
     result = pd.DataFrame({
-        "Line Item": df[label_col].astype(str).str.strip().apply(_clean_label),
+        "Line Item": df[label_col].astype(str).str.strip(),
         "Amount":    parse_amount(df[best_col]),
     })
 
@@ -740,49 +715,36 @@ def classify_pl(df: pd.DataFrame, use_ai: bool, api_key: str) -> pd.DataFrame:
 # METRICS — P&L
 # =============================================================================
 def compute_pl(df: pd.DataFrame, addbacks: float = 0.0) -> dict:
-    """
-    Compute P&L metrics from classified line items.
-
-    SIGN CONVENTION:
-      Expenses in parentheses e.g. (9,236) parse as -9,236.
-      s_abs() takes abs() so formulas always subtract a positive number
-      regardless of source PDF sign convention.
-      Other Income is kept signed (could be negative for FX losses).
-
-    ADDBACKS GUARD:
-      If addbacks > OpEx (user over-entered), opex_adj is clamped to 0.
-      The excess is noted but not applied — prevents EBITDA inflation.
-    """
     def s(cat):
-        return df.loc[df["Category"] == cat, "Amount"].sum()
-
-    def s_abs(cat):
-        return abs(df.loc[df["Category"] == cat, "Amount"].sum())
+        val = df.loc[df["Category"] == cat, "Amount"].sum()
+        
+        # Normalize sign for expenses
+        if cat in ["COGS", "OpEx", "D&A", "Interest", "Tax"]:
+            return abs(val)
+        
+        return val
 
     rev  = s("Revenue")
-    cogs = s_abs("COGS")
-    opex = s_abs("OpEx")
-    da   = s_abs("D&A")
+    cogs = s("COGS")
+    opex = s("OpEx")
+    da   = s("D&A")
     oi   = s("Other Income")
-    int_ = s_abs("Interest")
-    tax  = s_abs("Tax")
+    int_ = s("Interest")
+    tax  = abs(s("Tax"))
 
-    gp            = rev - cogs
-    # Guard: addbacks cannot exceed gross OpEx (prevents negative opex_adj)
-    clamped_addbacks = min(addbacks, opex)
-    opex_adj      = opex - clamped_addbacks
-    ebit          = gp - opex_adj - da
-    ebitda        = ebit + da
-    ebt           = ebit + oi - int_
-    net           = ebt - tax
+    gp       = rev - cogs
+    opex_adj = opex - addbacks          # normalised OpEx
+    ebit     = gp - opex_adj - da
+    ebitda   = ebit + da                # = gp - opex_adj (D&A neutral)
+    ebt      = ebit + oi - int_
+    net      = ebt - tax
 
     def pct(n, d=rev):
         return (n / d) if d else 0.0
 
     return {
         "Revenue": rev, "COGS": cogs, "Gross Profit": gp, "GP Margin": pct(gp),
-        "OpEx (gross)": opex, "Add-backs": clamped_addbacks, "OpEx (adj)": opex_adj,
-        "Add-backs Requested": addbacks,  # for warning display if clamped
+        "OpEx (gross)": opex, "Add-backs": addbacks, "OpEx (adj)": opex_adj,
         "D&A": da, "Other Income": oi,
         "EBITDA": ebitda, "EBITDA Margin": pct(ebitda),
         "EBIT": ebit, "EBIT Margin": pct(ebit),
@@ -795,48 +757,41 @@ def compute_pl(df: pd.DataFrame, addbacks: float = 0.0) -> dict:
 # CLASSIFICATION — BALANCE SHEET
 # =============================================================================
 def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Classify Balance Sheet line items.
-
-    Section context is maintained via BS_SECTION_TRIGGERS so that unnamed
-    items within a section inherit the correct category (e.g. an unnamed
-    line under 'Current assets' becomes Receivables by default).
-
-    IMPORTANT: The trigger check must happen on the ORIGINAL string, before
-    any cleaning. The uploaded code stripped the trigger from x before
-    re-checking it — that caused current_section to never be set.
-    """
     cats = []
     current_section = None
-
     for item in df["Line Item"].fillna("").astype(str):
-        raw = item.strip()
-        x   = raw.lower()
+        # Clean junk + normalize
+        x = re.sub(r"[^a-z0-9\s]", " ", str(item).lower())
+        x = re.sub(r"\s+", " ", x).strip()
+        
+        # Remove section headers embedded in line
+        for trigger in BS_SECTION_TRIGGERS.keys():
+            if trigger in x:
+                x = x.replace(trigger, "").strip()
+              
+        cat = "Other"
 
-        # ── 1. Update section context (on original x, not a cleaned copy) ──
         for trigger, section in BS_SECTION_TRIGGERS.items():
             if trigger in x:
                 current_section = section
                 break
 
-        # ── 2. Ignore header/total rows ────────────────────────────────────
         if any(kw in x for kw in BS_KEYWORDS["Ignore"]):
             cats.append("Ignore")
             continue
 
-        # ── 3. Keyword match ───────────────────────────────────────────────
-        cat = "Other"
         for c, keywords in BS_KEYWORDS.items():
             if c == "Ignore":
                 continue
             if any(k in x for k in keywords):
                 cat = c
                 break
-
-        # ── 4. Section fallback for unmatched items ────────────────────────
+        # Fallback: if we're inside Current Assets section, treat unknowns as Receivables
+        if cat == "Other" and current_section == "Receivables":
+            cat = "Receivables"
         if cat == "Other" and current_section is not None:
-            # Only inherit for operating asset/liability buckets, not Fixed Assets or Equity
-            if current_section in ("Receivables", "Payables", "Inventory", "Cash"):
+            # Only inherit section for asset/liability buckets
+            if current_section in ["Receivables", "Payables", "Inventory"]:
                 cat = current_section
 
         cats.append(cat)
@@ -853,33 +808,49 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     """
     Full LBO model:
       - Entry EV = EBITDA × entry_multiple
-      - Debt constrained by: (a) user leverage %, (b) 2.5× EBITDA, (c) 2× interest cover
       - Debt split 85/15 TLB / Revolver
       - Annual FCF sweeps revolver first, then TLB
       - Exit EV = Year-N EBITDA × exit_multiple; net of exit net debt
       - IRR computed via Newton-Raphson with Brent fallback
-
-    Debt constraints are VISIBLE: the model shows effective leverage vs requested
-    so the user understands any auto-reduction.
     """
     ebitda  = metrics["EBITDA"]
     revenue = metrics["Revenue"]
 
-    entry_ev      = ebitda * params["entry_multiple"]
-    requested_debt = entry_ev * params["leverage_pct"]
+    entry_ev   = ebitda * params["entry_multiple"]
+    # --- leverage haircut for SMEs ---
+    size = metrics["Revenue"]
+    margin = params["margins"][0]
+    
+    haircut = 1.0
+    
+    # small business risk
+    if size < 1_000_000:
+        haircut -= 0.15
+    
+    # margin quality
+    if margin < 0.20:
+        haircut -= 0.10
+    
+    # cap minimum haircut
+    haircut = max(0.5, haircut)
+    
+    # apply haircut
+    effective_leverage = params["leverage_pct"] * haircut
 
-    # ── Debt constraints (transparent, not a silent haircut) ─────────────────
-    # Constraint 1: Debt/EBITDA ≤ 2.5× (conservative for SGD SME bank lending)
-    max_debt_coverage = ebitda * 2.5
-    # Constraint 2: Interest coverage ≥ 2.0× (EBITDA / interest ≥ 2)
-    avg_rate = params["tlb_rate"] * 0.85 + params["rev_rate"] * 0.15
-    max_debt_icr = (ebitda / (2.0 * avg_rate)) if avg_rate > 0 else requested_debt
-
-    total_debt    = min(requested_debt, max_debt_coverage, max_debt_icr)
-    effective_lev = total_debt / entry_ev if entry_ev > 0 else 0
-
-    tlb      = total_debt * 0.85
-    revolver = total_debt * 0.15
+    # initial leverage
+    total_debt = entry_ev * effective_leverage
+    
+    # constraint 1: debt / EBITDA
+    max_debt_ebitda = ebitda * 2.5
+    
+    # constraint 2: interest coverage
+    avg_rate = (params["tlb_rate"] * 0.85 + params["rev_rate"] * 0.15)
+    max_debt_interest = ebitda / (2.0 * avg_rate) if avg_rate > 0 else total_debt
+    
+    # final debt = minimum of all
+    total_debt = min(total_debt, max_debt_ebitda, max_debt_interest)
+    tlb        = total_debt * 0.85
+    revolver   = total_debt * 0.15
 
     net_debt_bs = debt_bs - cash_bs
     equity_in   = entry_ev - total_debt + net_debt_bs
@@ -887,13 +858,13 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     if equity_in <= 0:
         st.warning(
             f"⚠️ Computed equity investment is negative (${equity_in:,.0f}). "
-            "The company's existing net debt exceeds the equity check at current "
-            "entry parameters. Reduce leverage or check BS debt/cash values. "
+            "This means the company's existing net debt exceeds the equity check at "
+            "current entry parameters. Check BS debt/cash or reduce leverage. "
             "Flooring equity_in at $1 for computation."
         )
         equity_in = 1.0
 
-    cash        = float(params["min_cash"])
+    cash     = float(params["min_cash"])
     base_margin = (metrics["EBITDA"] / metrics["Revenue"]) if metrics["Revenue"] else 0
     use_margin  = params.get("use_override_margin", True)
     prev_nwc    = params.get("initial_nwc", revenue * params["nwc_pct"])
@@ -909,11 +880,12 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         ebt_lbo  = ebit_lbo - interest
         tax      = max(0.0, ebt_lbo * params["tax_rate"])
 
-        nwc       = rev * params["nwc_pct"]
-        delta_nwc = 0.0 if i == 0 else nwc - prev_nwc   # Y1 = 0 (no artificial cash release)
+        nwc      = rev * params["nwc_pct"]
+        # Y1 delta_nwc = 0 (no artificial cash release on acquisition date)
+        delta_nwc = 0.0 if i == 0 else nwc - prev_nwc
         prev_nwc  = nwc
         capex     = rev * params["capex_pct"]
-        fcf       = ebitda_y - interest - tax - capex - delta_nwc
+        fcf = (ebit_lbo - tax) + da_y - capex - delta_nwc - interest
         cash     += fcf
 
         # Revolver draw if cash below minimum
@@ -922,43 +894,29 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
             revolver += draw
             cash     += draw
 
-        # Cash sweep: revolver first, then TLB (PARTIAL sweep)
-        sweep_pct = params.get("debt_sweep_pct", 0.6)  # 👈 key fix
-        
-        excess = max(0.0, cash - params["min_cash"])
-        sweep  = excess * sweep_pct
+        # Cash sweep: revolver first, then TLB
+        excess    = max(0.0, cash - params["min_cash"])
+        pay_rev   = min(revolver, excess); revolver -= pay_rev; cash -= pay_rev
+        excess    = max(0.0, cash - params["min_cash"])
+        pay_tlb   = min(tlb, excess);     tlb      -= pay_tlb; cash -= pay_tlb
 
-        # pay revolver first
-        pay_rev = min(revolver, sweep)
-        revolver -= pay_rev
-        cash -= pay_rev
-        
-        # remaining sweep goes to TLB
-        sweep -= pay_rev
-        
-        pay_tlb = min(tlb, sweep)
-        tlb -= pay_tlb
-        cash -= pay_tlb   # 👈 YOU MISSED THIS LINE
-        
-        # cap excess cash
-        max_cash = 0.1 * rev
-        cash = min(cash, max_cash)
+        debt_repaid = pay_rev + pay_tlb
 
         rows.append({
-            "Year":          i + 1,
-            "Revenue":       rev,
-            "EBITDA":        ebitda_y,
+            "Year":         i + 1,
+            "Revenue":      rev,
+            "EBITDA":       ebitda_y,
             "EBITDA Margin": ebitda_y / rev if rev else 0,
-            "Interest":      interest,
-            "Tax":           tax,
-            "CapEx":         capex,
-            "ΔNWC":          delta_nwc,
-            "FCF":           fcf,
-            "Debt Repaid":   pay_rev + pay_tlb,
-            "TLB":           tlb,
-            "Revolver":      revolver,
-            "Cash":          cash,
-            "Net Debt":      tlb + revolver - cash,
+            "Interest":     interest,
+            "Tax":          tax,
+            "CapEx":        capex,
+            "ΔNWC":         delta_nwc,
+            "FCF":          fcf,
+            "Debt Repaid":  debt_repaid,
+            "TLB":          tlb,
+            "Revolver":     revolver,
+            "Cash":         cash,
+            "Net Debt":     tlb + revolver - cash,
         })
 
     lbo_df = pd.DataFrame(rows)
@@ -969,8 +927,6 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     if exit_equity <= 0:
         return lbo_df, {
             "Entry EV": entry_ev, "Total Debt": total_debt,
-            "Requested Leverage": params["leverage_pct"],
-            "Effective Leverage": effective_lev,
             "Equity In": equity_in, "Exit EV": exit_ev,
             "Exit Equity": exit_equity, "MOIC": 0.0, "IRR": 0.0,
             "total_loss": True,
@@ -990,8 +946,6 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
 
     return lbo_df, {
         "Entry EV": entry_ev, "Total Debt": total_debt,
-        "Requested Leverage": params["leverage_pct"],
-        "Effective Leverage": effective_lev,
         "Equity In": equity_in, "Exit EV": exit_ev,
         "Exit Equity": exit_equity, "MOIC": moic, "IRR": irr,
         "total_loss": False,
@@ -1020,9 +974,9 @@ def fmt(x, unit: str = "auto") -> str:
 FMT_LBO = {
     "Revenue": "${:,.0f}", "EBITDA": "${:,.0f}", "EBITDA Margin": "{:.1%}",
     "Interest": "${:,.0f}", "Tax": "${:,.0f}", "CapEx": "${:,.0f}",
-    "ΔNWC": "${:,.0f}", "FCF": "${:,.0f}",
-    "Debt Repaid": "${:,.0f}", "TLB": "${:,.0f}",
-    "Revolver": "${:,.0f}", "Cash": "${:,.0f}", "Net Debt": "${:,.0f}",
+    "ΔNWC": "${:,.0f}", "FCF": "${:,.0f}", "TLB": "${:,.0f}",
+    "Revolver": "${:,.0f}", "Debt Repaid": "${:,.0f}",
+    "Cash": "${:,.0f}", "Net Debt": "${:,.0f}",
 }
 
 
@@ -1043,47 +997,97 @@ def chart_debt_paydown(lbo_df: pd.DataFrame):
         x=lbo_df["Year"], y=lbo_df["Revolver"],
         marker_color="#3b82f6",
     ))
+# =============================================================================
+# CHARTING
+# =============================================================================
+def chart_debt_paydown(lbo_df: pd.DataFrame):
+    if not PLOTLY:
+        return
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        name="TLB",
+        x=lbo_df["Year"], y=lbo_df["TLB"],
+        marker_color="#1e3a5f",
+    ))
+
+    fig.add_trace(go.Bar(
+        name="Revolver",
+        x=lbo_df["Year"], y=lbo_df["Revolver"],
+        marker_color="#3b82f6",
+    ))
+
     fig.add_trace(go.Scatter(
         name="Cash",
         x=lbo_df["Year"], y=lbo_df["Cash"],
-        mode="lines+markers", line_color="#16a34a", yaxis="y",
+        mode="lines+markers",
+        line_color="#16a34a",
     ))
+
     fig.update_layout(
         barmode="stack",
+        bargap=0.25,
         title="Debt Paydown & Cash Buildup",
-        xaxis_title="Year", yaxis_title="$",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        height=320, margin=dict(l=0, r=0, t=40, b=0),
-        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
+        xaxis_title="Year",
+        yaxis_title="$",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.15,
+            xanchor="right",
+            x=1
+        ),  # ✅ comma here
+        height=380,
+        margin=dict(l=0, r=0, t=80, b=20),
+        plot_bgcolor="#f8fafc",
+        paper_bgcolor="#ffffff",
     )
-    st.plotly_chart(fig, use_container_width=True)
 
+    st.plotly_chart(fig, use_container_width=True)
 
 def chart_fcf_ebitda(lbo_df: pd.DataFrame):
     if not PLOTLY:
         return
+
     fig = go.Figure()
+
     fig.add_trace(go.Bar(
-        name="EBITDA", x=lbo_df["Year"], y=lbo_df["EBITDA"],
+        name="EBITDA",
+        x=lbo_df["Year"], y=lbo_df["EBITDA"],
         marker_color="#0ea5e9",
     ))
+
     fig.add_trace(go.Bar(
-        name="FCF", x=lbo_df["Year"], y=lbo_df["FCF"],
+        name="FCF",
+        x=lbo_df["Year"], y=lbo_df["FCF"],
         marker_color="#16a34a",
     ))
-    fig.update_layout(
-        barmode="group", title="EBITDA vs Free Cash Flow",
-        xaxis_title="Year", yaxis_title="$",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        height=280, margin=dict(l=0, r=0, t=40, b=0),
-        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
+    fig.update_layout(
+        barmode="group",
+        title="EBITDA vs Free Cash Flow",
+        xaxis_title="Year",
+        yaxis_title="$",
+        height=350,
+        margin=dict(l=0, r=0, t=80, b=20),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.15,
+            xanchor="right",
+            x=1
+        ),
+        plot_bgcolor="#f8fafc",
+        paper_bgcolor="#ffffff",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 def chart_moic_waterfall(returns: dict):
     if not PLOTLY or returns.get("total_loss"):
         return
+
     fig = go.Figure(go.Waterfall(
         name="Value Bridge",
         orientation="v",
@@ -1099,13 +1103,17 @@ def chart_moic_waterfall(returns: dict):
         increasing={"marker": {"color": "#16a34a"}},
         decreasing={"marker": {"color": "#dc2626"}},
     ))
+
     fig.update_layout(
         title="Equity Value Bridge (Illustrative)",
-        height=280, margin=dict(l=0, r=0, t=40, b=0),
-        plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
+        height=350,
+        margin=dict(l=0, r=0, t=80, b=20),
+        waterfallgap=0.3,  # 👈 spacing fix
+        plot_bgcolor="#f8fafc",
+        paper_bgcolor="#ffffff",
     )
-    st.plotly_chart(fig, use_container_width=True)
 
+    st.plotly_chart(fig, use_container_width=True)
 
 # =============================================================================
 # EXCEL EXPORT
@@ -1330,30 +1338,40 @@ if pl_file:
                     f"🧹 **EBITDA normalisation active:** {fmt(total_addbacks)} "
                     "will be added back before computing EBITDA."
                 )
-
-            # Only count unknowns with non-zero amounts (zero-value noise rows don't matter)
-            unknown_count = ((df_pl["Category"] == "Unknown") & (df_pl["Amount"] != 0)).sum()
+              
+            unknown_rows = df_pl[df_pl["Category"] == "Unknown"]
+            
+            # Ignore zero-value noise rows
+            unknown_rows = unknown_rows[unknown_rows["Amount"] != 0]
+            
+            unknown_count = len(unknown_rows)
             if unknown_count:
                 st.warning(
-                    f"⚠️ {unknown_count} row(s) with non-zero amounts are unclassified. "
+                    f"⚠️ {unknown_count} row(s) unclassified. "
                     "Fix them below or enable AI Classification in the sidebar."
                 )
-
-            # data_editor returns the edited dataframe — assign it back to df_pl
-            # so ALL downstream code (memory save, compute_pl) uses user's corrections.
-            df_pl = st.data_editor(
-                df_pl,
+              
+            df_display = df_pl.copy()
+            
+            # Ensure numeric (fix OCR issues)
+            df_display["Amount"] = pd.to_numeric(df_display["Amount"], errors="coerce")
+            
+            # Flip sign ONLY for Tax (display only)
+            mask = df_display["Category"] == "Tax"
+            df_display.loc[mask, "Amount"] = df_display.loc[mask, "Amount"].abs()
+            
+            df_edited = st.data_editor(
+                df_display,
+                use_container_width=True,
+                num_rows="fixed",
                 column_config={
                     "Category": st.column_config.SelectboxColumn(
-                        "Category", options=PL_CATEGORIES
-                    ),
-                    "Amount": st.column_config.NumberColumn("Amount", format="$ %.0f"),
+                        "Category",
+                        options=["Revenue", "COGS", "OpEx", "D&A", "Interest", "Other Income", "Tax", "Ignore"],
+                    )
                 },
-                use_container_width=True,
-                hide_index=True,
-                num_rows="fixed",
             )
-
+          
             # Persist corrections to memory
             mem = load_memory()
             for _, r in df_pl.iterrows():
@@ -1406,6 +1424,12 @@ if bs_file:
             inventory   = df_bs.loc[df_bs["Category"] == "Inventory",   "Amount"].sum()
             bs_derived_nwc = receivables + inventory - payables
 
+            if receivables == 0:
+                st.warning(
+                    "⚠️ No receivables detected. This usually means:\n"
+                    "- Assets page missing, OR\n"
+                    "- Receivables misclassified (e.g. 'amount due from customers')."
+                )
 
 # =============================================================================
 # AUTO-CALIBRATE BUTTON
@@ -1452,14 +1476,6 @@ if pl_metrics:
     m = pl_metrics
 
     # ── P&L Headline metrics ──────────────────────────────────────────────────
-    # Warn if addbacks were clamped (user entered more than total OpEx)
-    if m.get("Add-backs Requested", 0) > m["Add-backs"] + 1:
-        st.warning(
-            f"⚠️ Add-backs clamped: you entered {fmt(m['Add-backs Requested'])} "
-            f"but total OpEx is only {fmt(m['OpEx (gross)'])}. "
-            f"Applied {fmt(m['Add-backs'])} to avoid negative OpEx."
-        )
-
     if m["Add-backs"] > 0:
         st.success(
             f"📈 Normalised EBITDA: **{fmt(m['EBITDA'])}** "
@@ -1524,16 +1540,6 @@ if pl_metrics:
         )
         st.stop()
 
-    # ── Exit multiple guard ────────────────────────────────────────────────────
-    if exit_multiple <= entry_multiple:
-        st.error(
-            f"⚠️ Exit multiple ({exit_multiple:.1f}x) must be greater than "
-            f"entry multiple ({entry_multiple:.1f}x). "
-            "A buyer cannot sell for less than they paid on the same EBITDA basis. "
-            "Adjust in the sidebar."
-        )
-        st.stop()
-
     # ── LBO params (inject initial_nwc if available) ──────────────────────────
     lbo_params = {
         **params,
@@ -1542,34 +1548,31 @@ if pl_metrics:
 
     # ── Scenario Comparison ───────────────────────────────────────────────────
     st.subheader("📐 Scenario Analysis — Bear / Base / Bull")
-    st.caption(
-        "Base = your current sidebar parameters. "
-        "Bear / Bull adjust entry/exit multiples, growth, margins, and leverage."
-    )
     scenarios = build_scenarios(pl_metrics, cash_bs, debt_bs, lbo_params)
 
     sc_rows = []
     for sc_name, sc_params in scenarios.items():
         _, sc_ret = run_lbo(pl_metrics, cash_bs, debt_bs, sc_params)
         sc_rows.append({
-            "Scenario":       sc_name,
-            "Entry":          f"{sc_params['entry_multiple']:.1f}x",
-            "Exit":           f"{sc_params['exit_multiple']:.1f}x",
-            "Growth":         fmt(sc_params["growth"], "pct"),
-            "Margin":         fmt(sc_params["margins"][0], "pct"),
-            "Req. Leverage":  fmt(sc_params["leverage_pct"], "pct"),
-            "Eff. Leverage":  fmt(sc_ret.get("Effective Leverage", sc_params["leverage_pct"]), "pct"),
-            "Entry EV":       fmt(sc_ret["Entry EV"]),
-            "Equity In":      fmt(sc_ret["Equity In"]),
-            "Exit EV":        fmt(sc_ret["Exit EV"]),
-            "MOIC":           "Loss" if sc_ret["total_loss"] else f"{sc_ret['MOIC']:.2f}x",
-            "IRR":            "—"    if sc_ret["total_loss"] else fmt(sc_ret["IRR"], "pct"),
+            "Scenario":  sc_name,
+            "Entry":     f"{sc_params['entry_multiple']:.1f}x",
+            "Exit":      f"{sc_params['exit_multiple']:.1f}x",
+            "Growth":    fmt(sc_params["growth"], "pct"),
+            "Margin":    fmt(sc_params["margins"][0], "pct"),
+            "Leverage":  fmt(sc_params["leverage_pct"], "pct"),
+            "Entry EV":  fmt(sc_ret["Entry EV"]),
+            "Equity In": fmt(sc_ret["Equity In"]),
+            "Exit EV":   fmt(sc_ret["Exit EV"]),
+            "MOIC":      "Loss" if sc_ret["total_loss"] else f"{sc_ret['MOIC']:.2f}x",
+            "IRR":       "—"    if sc_ret["total_loss"] else fmt(sc_ret["IRR"], "pct"),
         })
-    st.dataframe(
-        pd.DataFrame(sc_rows).set_index("Scenario"),
-        use_container_width=True,
+    st.caption(
+        "Base = current model assumptions | Bear/Bull adjust growth, margins, and leverage — not just multiples."
     )
-
+    st.markdown("**Scenario positioning:**")
+    for sc in sc_rows:
+        st.write(f"{sc['Scenario']}: Entry {sc['Entry']} | Exit {sc['Exit']}")
+  
     # ── Current parameters — Returns ──────────────────────────────────────────
     lbo_df, returns = run_lbo(pl_metrics, cash_bs, debt_bs, lbo_params)
 
@@ -1602,15 +1605,35 @@ if pl_metrics:
         else:
             st.error(f"❌ IRR of {irr_str} — below PE hurdle rate. Re-examine deal structure.")
 
-        # ── Leverage disclosure ───────────────────────────────────────────────
-        req_lev = returns.get("Requested Leverage", params["leverage_pct"])
-        eff_lev = returns.get("Effective Leverage", req_lev)
-        if abs(eff_lev - req_lev) > 0.01:
-            st.info(
-                f"ℹ️ **Leverage auto-adjusted:** You requested {req_lev:.0%} but debt was "
-                f"capped at **{eff_lev:.0%}** to satisfy 2.5× Debt/EBITDA and 2× interest "
-                f"coverage constraints. This is typical for SGD SME bank lending."
-            )
+        # ── Investor View — Cash vs Debt ─────────────────────────────
+        st.subheader("💰 Investor View — Your Investment")
+
+        entry_ev = returns["Entry EV"]
+        equity_in = returns["Equity In"]
+        net_debt_bs = debt_bs - cash_bs
+        debt_used = entry_ev - equity_in + net_debt_bs
+
+        c1, c2 = st.columns(2)
+        c1.metric("💵 Your Cash Invested", fmt(equity_in))
+        c2.metric("🏦 Debt Financing", fmt(debt_used))
+
+        if entry_ev > 0:
+                st.caption(
+                    f"Funding mix: {equity_in/entry_ev:.0%} equity | {debt_used/entry_ev:.0%} debt"
+                )
+        # ── Deleveraging — Debt Paydown ─────────────────────────────
+        st.subheader("📉 Deleveraging — Debt Paydown")
+        
+        initial_debt = returns["Total Debt"]
+        final_debt = lbo_df.iloc[-1]["TLB"] + lbo_df.iloc[-1]["Revolver"]
+        debt_repaid = initial_debt - final_debt
+        
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Initial Debt", fmt(initial_debt))
+        d2.metric("Debt Repaid", fmt(debt_repaid))
+        d3.metric("Debt Remaining at Exit", fmt(final_debt))
+        
+        st.caption("Debt is repaid using the company's free cash flow over the investment period.")
 
         # ── Charts ────────────────────────────────────────────────────────────
         if PLOTLY:
@@ -1625,8 +1648,13 @@ if pl_metrics:
 
         # ── MOIC Sensitivity grid ─────────────────────────────────────────────
         st.subheader("🔢 Sensitivity: MOIC (Entry × Exit)")
-        entry_steps = [round(entry_multiple + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)]
-        exit_steps  = [round(exit_multiple  + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)]
+        entry_steps = sorted(set([
+            round(entry_multiple + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)
+        ] + [round(entry_multiple, 1)]))
+        
+        exit_steps = sorted(set([
+            round(exit_multiple + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)
+        ] + [round(exit_multiple, 1)]))
         rows_sens = []
         for em in entry_steps:
             row = {"Entry \\ Exit": f"{em:.1f}x"}
@@ -1642,8 +1670,19 @@ if pl_metrics:
                     "Loss" if ret2["total_loss"] else f"{ret2['MOIC']:.2f}x"
                 )
             rows_sens.append(row)
+        df_sens = pd.DataFrame(rows_sens).set_index("Entry \\ Exit")
+        
+        def highlight_base(row):
+            styles = []
+            for col in df_sens.columns:
+                if row.name == f"{entry_multiple:.1f}x" and col == f"{exit_multiple:.1f}x":
+                    styles.append("background-color: #16a34a; color: white;")
+                else:
+                    styles.append("")
+            return styles
+        
         st.dataframe(
-            pd.DataFrame(rows_sens).set_index("Entry \\ Exit"),
+            df_sens.style.apply(highlight_base, axis=1),
             use_container_width=True,
         )
 
