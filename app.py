@@ -814,7 +814,38 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     revenue = metrics["Revenue"]
 
     entry_ev   = ebitda * params["entry_multiple"]
-    total_debt = entry_ev * params["leverage_pct"]
+    # --- leverage haircut for SMEs ---
+    size = metrics["Revenue"]
+    margin = params["margins"][0]
+    
+    haircut = 1.0
+    
+    # small business risk
+    if size < 1_000_000:
+        haircut -= 0.15
+    
+    # margin quality
+    if margin < 0.20:
+        haircut -= 0.10
+    
+    # cap minimum haircut
+    haircut = max(0.5, haircut)
+    
+    # apply haircut
+    effective_leverage = params["leverage_pct"] * haircut
+
+    # initial leverage
+    total_debt = entry_ev * effective_leverage
+    
+    # constraint 1: debt / EBITDA
+    max_debt_ebitda = ebitda * 2.5
+    
+    # constraint 2: interest coverage
+    avg_rate = (params["tlb_rate"] * 0.85 + params["rev_rate"] * 0.15)
+    max_debt_interest = ebitda / (2.0 * avg_rate) if avg_rate > 0 else total_debt
+    
+    # final debt = minimum of all
+    total_debt = min(total_debt, max_debt_ebitda, max_debt_interest)
     tlb        = total_debt * 0.85
     revolver   = total_debt * 0.15
 
