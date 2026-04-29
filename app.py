@@ -1196,8 +1196,18 @@ section[data-testid="stSidebar"] div.block-container {
 }
 
 /* Optional: tighten vertical spacing */
-section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
-    gap: 0.5rem;
+
+section[data-testid="stSidebar"] {
+    background: #0f172a;
+    color: #e2e8f0;
+}
+
+/* Only target text elements */
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div {
+    color: #e2e8f0 !important;
 }
 
 </style>
