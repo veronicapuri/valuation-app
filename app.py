@@ -1381,8 +1381,14 @@ if pl_file:
                 df_display,
                 use_container_width=True,
                 num_rows="fixed",
+                column_config={
+                    "Category": st.column_config.SelectboxColumn(
+                        "Category",
+                        options=["Revenue", "COGS", "OpEx", "D&A", "Interest", "Tax", "Ignore"],
+                    )
+                },
             )
-
+          
             # Persist corrections to memory
             mem = load_memory()
             for _, r in df_pl.iterrows():
