@@ -1170,20 +1170,10 @@ for k, v in _defaults.items():
 st.markdown("""
 <style>
 
-/* Force sidebar toggle ABOVE everything */
+/* Make toggle always clickable */
 button[aria-label="Toggle sidebar"] {
-    position: relative !important;
-    z-index: 9999 !important;
-}
-
-/* Also fix parent container layering */
-section[data-testid="stSidebar"] {
-    z-index: 999 !important;
-}
-
-/* Ensure main content doesn't overlap */
-.main {
-    z-index: 1 !important;
+    pointer-events: auto !important;
+    z-index: 10000 !important;
 }
 
 </style>
