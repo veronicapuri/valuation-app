@@ -1187,19 +1187,19 @@ for k, v in _defaults.items():
 # =============================================================================
 st.markdown("""
 <style>
-/* Hide header visually but keep layout */
+/* Keep header but hide visually */
 header[data-testid="stHeader"] {
     height: 0px;
     background: transparent;
 }
 
-/* Remove top padding cleanly */
-div.block-container {
-    padding-top: 1rem !important;
+/* Reduce sidebar top padding */
+section[data-testid="stSidebar"] div.block-container {
+    padding-top: 0.5rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
-height: 0px;  (NOT display: none)
+
 st.sidebar.subheader("⚙️ Deal Parameters")
 
 with st.sidebar.expander("🤖 AI Classification (optional)"):
