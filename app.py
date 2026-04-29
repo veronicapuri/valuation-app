@@ -169,6 +169,7 @@ BS_KEYWORDS = {
     ],
     "Receivables": [
         "receivable", "debtor", "trade receivable", "other receivable",
+        "amount due from", "contract asset", "due from customer",
         "trade and other receivables", "prepayment", "deposit paid",
         "advance paid", "amount owing from", "owing from",
         "advance salaries", "raffles deposit",
@@ -769,6 +770,9 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
             if any(k in x for k in keywords):
                 cat = c
                 break
+        # Fallback: if we're inside Current Assets section, treat unknowns as Receivables
+        if cat == "Other" and current_section == "Receivables":
+            cat = "Receivables"
 
         if cat == "Other" and current_section is not None:
             cat = current_section
@@ -1301,6 +1305,12 @@ if bs_file:
             inventory   = df_bs.loc[df_bs["Category"] == "Inventory",   "Amount"].sum()
             bs_derived_nwc = receivables + inventory - payables
 
+            if receivables == 0:
+                st.warning(
+                    "⚠️ No receivables detected. This usually means:\n"
+                    "- Assets page missing, OR\n"
+                    "- Receivables misclassified (e.g. 'amount due from customers')."
+                )
 
 # =============================================================================
 # AUTO-CALIBRATE BUTTON
