@@ -157,7 +157,7 @@ PL_KEYWORDS = {
         "pte", "ltd", "sdn bhd", "for the year", "as at", "nan", "none",
         "operating profit", "operating expenses",
         "profit before", "profit after", "loss before", "loss after",
-        "cost of sales", "other income", "trading income",
+        "cost of sales", "trading income",
     ],
 }
 
