@@ -119,7 +119,7 @@ st.markdown("""
         font-weight: 600;
         margin-bottom: 4px;
     }
-
+""", unsafe_allow_html=True)
 
 # =============================================================================
 # CONSTANTS
