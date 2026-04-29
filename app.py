@@ -38,7 +38,7 @@ except ImportError:
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-st.set_page_config(layout="wide", page_title="SME Valuation Tool", page_icon="📊")
+#st.set_page_config(layout="wide", page_title="SME Valuation Tool", page_icon="📊")
 
 # ── Custom CSS ─────────────────────────────────────────────────────────────────
 st.markdown("""
