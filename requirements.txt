@@ -10,3 +10,4 @@ python-dateutil
 pdf2image
 pytesseract
 Pillow
+plotly
