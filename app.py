@@ -994,24 +994,6 @@ FMT_LBO = {
     "Cash": "${:,.0f}", "Net Debt": "${:,.0f}",
 }
 
-
-# =============================================================================
-# CHARTING
-# =============================================================================
-def chart_debt_paydown(lbo_df: pd.DataFrame):
-    if not PLOTLY:
-        return
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="TLB",
-        x=lbo_df["Year"], y=lbo_df["TLB"],
-        marker_color="#1e3a5f",
-    ))
-    fig.add_trace(go.Bar(
-        name="Revolver",
-        x=lbo_df["Year"], y=lbo_df["Revolver"],
-        marker_color="#3b82f6",
-    ))
 # =============================================================================
 # CHARTING
 # =============================================================================
@@ -1188,26 +1170,20 @@ for k, v in _defaults.items():
 st.markdown("""
 <style>
 
-/* DO NOT TOUCH HEADER */
-
-/* Fix sidebar spacing only */
-section[data-testid="stSidebar"] div.block-container {
-    padding-top: 0.5rem !important;
+/* FIX toggle button visibility */
+button[kind="header"] {
+    color: white !important;
+    background: transparent !important;
 }
 
-/* Optional: tighten vertical spacing */
+/* Ensure icons stay visible */
+button[kind="header"] svg {
+    fill: white !important;
+}
 
+/* Sidebar background */
 section[data-testid="stSidebar"] {
     background: #0f172a;
-    color: #e2e8f0;
-}
-
-/* Only target text elements */
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] span,
-section[data-testid="stSidebar"] div {
-    color: #e2e8f0 !important;
 }
 
 </style>
