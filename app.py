@@ -1187,8 +1187,18 @@ for k, v in _defaults.items():
 # =============================================================================
 st.markdown("""
 <style>
-section[data-testid="stSidebar"] > div:first-child {
-    padding-top: 0.2rem;
+/* Hide Streamlit header (top bar) */
+header[data-testid="stHeader"] {
+    display: none;
+}
+
+/* Remove extra top padding from app */
+section[data-testid="stSidebar"] {
+    padding-top: 0 !important;
+}
+
+div.block-container {
+    padding-top: 1rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
