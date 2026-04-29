@@ -1368,7 +1368,15 @@ if pl_file:
                     "Fix them below or enable AI Classification in the sidebar."
                 )
 
+            df_display = df_pl.copy()
+            
+            # Flip sign ONLY for display
+            df_display.loc[df_display["Category"] == "Tax", "Amount"] = (
+                df_display.loc[df_display["Category"] == "Tax", "Amount"].abs()
+            )
+            
             df_pl = st.data_editor(
+                df_display,
                 df_pl,
                 column_config={
                     "Category": st.column_config.SelectboxColumn(
