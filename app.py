@@ -1167,17 +1167,17 @@ for k, v in _defaults.items():
 # =============================================================================
 # SIDEBAR
 # =============================================================================
-st.markdown("""
-<style>
+#st.markdown("""
+#<style>
 
-/* Make toggle always clickable */
-button[aria-label="Toggle sidebar"] {
-    pointer-events: auto !important;
-    z-index: 10000 !important;
-}
+#/* Make toggle always clickable */
+#button[aria-label="Toggle sidebar"] {
+ #   pointer-events: auto !important;
+  #  z-index: 10000 !important;
+#}
 
-</style>
-""", unsafe_allow_html=True)
+#</style>
+#""", unsafe_allow_html=True)
 
 st.sidebar.subheader("⚙️ Deal Parameters")
 
