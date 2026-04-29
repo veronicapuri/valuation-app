@@ -1187,16 +1187,19 @@ for k, v in _defaults.items():
 # =============================================================================
 st.markdown("""
 <style>
-/* Keep header but hide visually */
-header[data-testid="stHeader"] {
-    height: 0px;
-    background: transparent;
-}
 
-/* Reduce sidebar top padding */
+/* DO NOT TOUCH HEADER */
+
+/* Fix sidebar spacing only */
 section[data-testid="stSidebar"] div.block-container {
     padding-top: 0.5rem !important;
 }
+
+/* Optional: tighten vertical spacing */
+section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+    gap: 0.5rem;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
