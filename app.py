@@ -1638,7 +1638,20 @@ if pl_metrics:
                 st.caption(
                     f"Funding mix: {equity_in/entry_ev:.0%} equity | {debt_used/entry_ev:.0%} debt"
                 )
-                  
+        # ── Deleveraging — Debt Paydown ─────────────────────────────
+        st.subheader("📉 Deleveraging — Debt Paydown")
+        
+        initial_debt = returns["Debt Financing"]  # from run_lbo
+        final_debt = lbo_df.iloc[-1]["TLB"] + lbo_df.iloc[-1]["Revolver"]
+        debt_repaid = initial_debt - final_debt
+        
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Initial Debt", fmt(initial_debt))
+        d2.metric("Debt Repaid", fmt(debt_repaid))
+        d3.metric("Debt Remaining at Exit", fmt(final_debt))
+        
+        st.caption("Debt is repaid using the company's free cash flow over the investment period.")
+
         # ── Charts ────────────────────────────────────────────────────────────
         if PLOTLY:
             ch1, ch2 = st.columns(2)
