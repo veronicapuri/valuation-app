@@ -954,7 +954,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         return lbo_df, {
             "Entry EV": entry_ev, "Total Debt": total_debt,
             "Requested Leverage": params["leverage_pct"],
-            "Effective Leverage": effective_leverage,
+            "Effective Leverage": effective_lev,
             "Equity In": equity_in, "Exit EV": exit_ev,
             "Exit Equity": exit_equity, "MOIC": 0.0, "IRR": 0.0,
             "total_loss": True,
@@ -975,7 +975,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     return lbo_df, {
         "Entry EV": entry_ev, "Total Debt": total_debt,
         "Requested Leverage": params["leverage_pct"],
-        "Effective Leverage": effective_leverage,
+        "Effective Leverage": effective_lev,
         "Equity In": equity_in, "Exit EV": exit_ev,
         "Exit Equity": exit_equity, "MOIC": moic, "IRR": irr,
         "total_loss": False,
