@@ -363,8 +363,7 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
 
 def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
                     base_params: dict) -> dict:
-    """Bear / Base / Bull scenario parameters from auto-calibration."""
-    cal   = auto_calibrate(metrics, cash_bs, debt_bs)
+    """Bear / Base / Bull scenarios derived from current model assumptions."""
     years = base_params.get("years", 5)
     base_margin = base_params["margins"][0]
 
