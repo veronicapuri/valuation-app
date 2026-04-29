@@ -348,6 +348,7 @@ def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
     """Bear / Base / Bull scenario parameters from auto-calibration."""
     cal   = auto_calibrate(metrics, cash_bs, debt_bs)
     years = base_params.get("years", 5)
+    base_margin = base_params["margins"][0]
 
     def _make(entry_d, exit_d, growth_d, margin_d, lev_d, capex_d, nwc_d):
         return {
@@ -355,7 +356,7 @@ def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
             "entry_multiple":       round(cal["entry_multiple"] + entry_d, 1),
             "exit_multiple":        round(cal["exit_multiple"]  + exit_d,  1),
             "growth":               max(0.0, cal["growth"]        + growth_d),
-            "margins":              [round(max(0.05, cal["target_margin"] + margin_d), 3)] * years,
+            "margins": [round(max(0.05, base_margin + margin_d), 3)] * years,
             "leverage_pct":         round(min(0.75, max(0.20, cal["leverage_pct"] + lev_d)), 2),
             "capex_pct":            round(max(0.01, cal["capex_pct"] + capex_d), 3),
             "nwc_pct":              round(max(0.01, cal["nwc_pct"]   + nwc_d),   3),
@@ -364,7 +365,10 @@ def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
 
     return {
         "Bear 🐻": _make(+0.5, -1.0, -0.05, -0.05, +0.10, +0.02, +0.02),
-        "Base 📊": _make( 0.0,  0.0,  0.00,  0.00,  0.00,  0.00,  0.00),
+        "Base 📊": {
+            **base_params,
+            "use_override_margin": True,
+        },
         "Bull 🚀": _make(-0.5, +1.0, +0.05, +0.05, -0.05, -0.01, -0.02),
     }
 
@@ -1516,11 +1520,13 @@ if pl_metrics:
             "MOIC":      "Loss" if sc_ret["total_loss"] else f"{sc_ret['MOIC']:.2f}x",
             "IRR":       "—"    if sc_ret["total_loss"] else fmt(sc_ret["IRR"], "pct"),
         })
-    st.dataframe(
-        pd.DataFrame(sc_rows).set_index("Scenario"),
-        use_container_width=True,
+    st.caption(
+        "Base = current model assumptions | Bear/Bull adjust growth, margins, and leverage — not just multiples."
     )
-
+    st.markdown("**Scenario positioning:**")
+    for sc in sc_rows:
+        st.write(f"{sc['Scenario']}: Entry {sc['Entry']} | Exit {sc['Exit']}")
+  
     # ── Current parameters — Returns ──────────────────────────────────────────
     lbo_df, returns = run_lbo(pl_metrics, cash_bs, debt_bs, lbo_params)
 
@@ -1566,8 +1572,13 @@ if pl_metrics:
 
         # ── MOIC Sensitivity grid ─────────────────────────────────────────────
         st.subheader("🔢 Sensitivity: MOIC (Entry × Exit)")
-        entry_steps = [round(entry_multiple + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)]
-        exit_steps  = [round(exit_multiple  + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)]
+        entry_steps = sorted(set([
+            round(entry_multiple + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)
+        ] + [round(entry_multiple, 1)]))
+        
+        exit_steps = sorted(set([
+            round(exit_multiple + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)
+        ] + [round(exit_multiple, 1)]))
         rows_sens = []
         for em in entry_steps:
             row = {"Entry \\ Exit": f"{em:.1f}x"}
@@ -1583,8 +1594,19 @@ if pl_metrics:
                     "Loss" if ret2["total_loss"] else f"{ret2['MOIC']:.2f}x"
                 )
             rows_sens.append(row)
+        df_sens = pd.DataFrame(rows_sens).set_index("Entry \\ Exit")
+        
+        def highlight_base(row):
+            styles = []
+            for col in df_sens.columns:
+                if row.name == f"{entry_multiple:.1f}x" and col == f"{exit_multiple:.1f}x":
+                    styles.append("background-color: #16a34a; color: white;")
+                else:
+                    styles.append("")
+            return styles
+        
         st.dataframe(
-            pd.DataFrame(rows_sens).set_index("Entry \\ Exit"),
+            df_sens.style.apply(highlight_base, axis=1),
             use_container_width=True,
         )
 
