@@ -1187,22 +1187,19 @@ for k, v in _defaults.items():
 # =============================================================================
 st.markdown("""
 <style>
-/* Hide Streamlit header (top bar) */
+/* Hide header visually but keep layout */
 header[data-testid="stHeader"] {
-    display: none;
+    height: 0px;
+    background: transparent;
 }
 
-/* Remove extra top padding from app */
-section[data-testid="stSidebar"] {
-    padding-top: 0 !important;
-}
-
+/* Remove top padding cleanly */
 div.block-container {
     padding-top: 1rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
-
+height: 0px;  (NOT display: none)
 st.sidebar.subheader("⚙️ Deal Parameters")
 
 with st.sidebar.expander("🤖 AI Classification (optional)"):
