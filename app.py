@@ -119,12 +119,6 @@ st.markdown("""
         font-weight: 600;
         margin-bottom: 4px;
     }
-    /* Sidebar tweak */
-    section[data-testid="stSidebar"] { background: #0f172a; }
-    section[data-testid="stSidebar"] .stSelectbox label,
-    section[data-testid="stSidebar"] .stSlider label { color: #94a3b8 !important; }
-</style>
-""", unsafe_allow_html=True)
 
 
 # =============================================================================
