@@ -951,8 +951,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     moic = exit_equity / equity_in
 
     # Build cash flow series for IRR: [-equity_in, FCF_1, ..., FCF_N + exit_equity]
-    cashflows = [-equity_in] + [r["FCF"] for r in rows]
-    cashflows[-1] += exit_equity
+    cashflows = [-equity_in, exit_equity]
 
     try:
         irr = compute_irr(cashflows)
