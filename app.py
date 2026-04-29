@@ -988,15 +988,15 @@ def chart_debt_paydown(lbo_df: pd.DataFrame):
         title="Debt Paydown & Cash Buildup",
         xaxis_title="Year",
         yaxis_title="$",
-        height=380,
-        margin=dict(l=0, r=0, t=80, b=20),  # 👈 FIXED
         legend=dict(
             orientation="h",
             yanchor="bottom",
             y=1.15,
             xanchor="right",
             x=1
-        ),
+        ),  # ✅ comma here
+        height=380,
+        margin=dict(l=0, r=0, t=80, b=20),
         plot_bgcolor="#f8fafc",
         paper_bgcolor="#ffffff",
     )
