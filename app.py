@@ -288,15 +288,19 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     net_debt = max(0.0, debt_bs - cash_bs)
 
     # ── Entry multiple ────────────────────────────────────────────────────────
-    if   rev < 500_000:      base_entry = 2.5
+    if   rev < 500_000:      base_entry = 2.0
     elif rev < 2_000_000:    base_entry = 3.5
     elif rev < 10_000_000:   base_entry = 5.0
     else:                    base_entry = 6.5
 
-    if   margin >= 0.30:  margin_adj = +1.0
-    elif margin >= 0.20:  margin_adj = +0.5
-    elif margin >= 0.10:  margin_adj =  0.0
-    else:                 margin_adj = -0.5
+    if margin >= 0.30:
+        margin_adj = +0.5 if rev < 1_000_000 else +1.0
+    elif margin >= 0.20:
+        margin_adj = +0.5
+    elif margin >= 0.10:
+        margin_adj = 0.0
+    else:
+        margin_adj = -0.5
 
     leverage_ratio = (net_debt / ebitda) if ebitda > 0 else 0
     lev_adj = -0.5 if leverage_ratio > 3 else 0.0
@@ -305,7 +309,10 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     entry = max(2.5, min(10.0, entry))
 
     # ── Exit multiple ─────────────────────────────────────────────────────────
-    exit_ = round(min(12.0, max(entry + 0.5, entry + 1.5)), 1)
+    if rev < 1_000_000:
+        exit_ = round(entry + 0.5, 1)
+    else:
+        exit_ = round(entry + 1.0, 1)
 
     # ── Revenue growth ────────────────────────────────────────────────────────
     if   rev < 1_000_000:  growth = 0.08
@@ -313,13 +320,24 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     else:                  growth = 0.15
 
     # ── Target EBITDA margin (exit year) ─────────────────────────────────────
-    target_margin = round(min(0.45, max(0.10, margin + 0.05)), 3)
+    if margin < 0.20:
+        target_margin = margin + 0.05
+    elif margin < 0.30:
+        target_margin = margin + 0.03
+    else:
+        target_margin = margin + 0.01   # 👈 high-margin businesses get little uplift
+    
+    target_margin = round(min(0.45, max(0.10, target_margin)), 3)
 
     # ── Leverage ──────────────────────────────────────────────────────────────
     # Max debt at entry = lesser of 3× EBITDA or 65% of entry EV
     entry_ev  = entry * ebitda if ebitda > 0 else 1
-    max_debt  = min(ebitda * 3.0, 0.65 * entry_ev) if ebitda > 0 else 0
-    leverage  = round(max(0.30, min(0.65, max_debt / entry_ev)), 2)
+    if rev < 1_000_000:
+        max_debt = min(ebitda * 2.0, 0.50 * entry_ev)
+        leverage = round(max(0.25, min(0.50, max_debt / entry_ev)), 2)
+    else:
+        max_debt = min(ebitda * 3.0, 0.65 * entry_ev)
+        leverage = round(max(0.30, min(0.65, max_debt / entry_ev)), 2)
 
     # ── CapEx / NWC ───────────────────────────────────────────────────────────
     capex = 0.03 if margin >= 0.25 else 0.06
@@ -353,23 +371,24 @@ def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
     def _make(entry_d, exit_d, growth_d, margin_d, lev_d, capex_d, nwc_d):
         return {
             **base_params,
-            "entry_multiple":       round(cal["entry_multiple"] + entry_d, 1),
-            "exit_multiple":        round(cal["exit_multiple"]  + exit_d,  1),
-            "growth":               max(0.0, cal["growth"]        + growth_d),
+            "entry_multiple": round(base_params["entry_multiple"] + entry_d, 1),
+            "exit_multiple":  round(base_params["exit_multiple"]  + exit_d, 1),
+            "growth":         max(0.0, base_params["growth"] + growth_d),
             "margins": [round(max(0.05, base_margin + margin_d), 3)] * years,
-            "leverage_pct":         round(min(0.75, max(0.20, cal["leverage_pct"] + lev_d)), 2),
-            "capex_pct":            round(max(0.01, cal["capex_pct"] + capex_d), 3),
-            "nwc_pct":              round(max(0.01, cal["nwc_pct"]   + nwc_d),   3),
-            "use_override_margin":  True,
+            "leverage_pct":   round(min(0.75, max(0.20, base_params["leverage_pct"] + lev_d)), 2),
+            "capex_pct":      round(max(0.01, base_params["capex_pct"] + capex_d), 3),
+            "nwc_pct":        round(max(0.01, base_params["nwc_pct"] + nwc_d), 3),
+            "use_override_margin": True,
         }
 
     return {
-        "Bear 🐻": _make(+0.5, -1.0, -0.05, -0.05, +0.10, +0.02, +0.02),
+
+        "Bear 🐻": _make(+0.5, -0.5, -0.03, -0.02, +0.08, +0.02, +0.02),
         "Base 📊": {
             **base_params,
             "use_override_margin": True,
         },
-        "Bull 🚀": _make(-0.5, +1.0, +0.05, +0.05, -0.05, -0.01, -0.02),
+        "Bull 🚀": _make(-0.5, +0.5, +0.03, +0.03, -0.05, -0.01, -0.02),
     }
 
 
