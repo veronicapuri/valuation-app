@@ -67,17 +67,32 @@ PL_CATEGORIES = ["Revenue","COGS","OpEx","D&A","Other Income","Interest","Tax","
 
 def classify_simple(label):
     x = label.lower()
-    if "revenue" in x or "sales" in x:
+
+    if any(k in x for k in ["revenue","sales","turnover","income"]):
         return "Revenue"
-    if "cost" in x:
+
+    if any(k in x for k in ["cost of","cogs","direct cost","cost of sales"]):
         return "COGS"
-    if "tax" in x:
-        return "Tax"
-    if "interest" in x:
-        return "Interest"
-    if "depreci" in x:
+
+    if any(k in x for k in ["depreci","amort"]):
         return "D&A"
+
+    if any(k in x for k in ["interest","finance"]):
+        return "Interest"
+
+    if any(k in x for k in ["tax"]):
+        return "Tax"
+
+    if any(k in x for k in ["other income","grant","gain"]):
+        return "Other Income"
+
+    # everything else = OpEx
     return "OpEx"
+
+st.subheader("Category Summary")
+
+summary = df.groupby("Category")["Amount"].sum()
+st.write(summary)
 
 # =========================
 # METRICS
