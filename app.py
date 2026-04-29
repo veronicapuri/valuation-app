@@ -885,7 +885,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         delta_nwc = 0.0 if i == 0 else nwc - prev_nwc
         prev_nwc  = nwc
         capex     = rev * params["capex_pct"]
-        fcf = (ebit_lbo - tax) + da_y - capex - delta_nwc - interest
+        fcf = (ebit_lbo - tax) + da_y - capex - delta_nwc
         cash     += fcf
 
         # Revolver draw if cash below minimum
@@ -895,12 +895,28 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
             cash     += draw
 
         # Cash sweep: revolver first, then TLB
-        excess    = max(0.0, cash - params["min_cash"])
-        pay_rev   = min(revolver, excess); revolver -= pay_rev; cash -= pay_rev
-        excess    = max(0.0, cash - params["min_cash"])
-        pay_tlb   = min(tlb, excess);     tlb      -= pay_tlb; cash -= pay_tlb
+        sweep_pct = params.get("debt_sweep_pct", 0.6)
+        
+        excess = max(0.0, cash - params["min_cash"])
+        sweep  = excess * sweep_pct
+        
+        # revolver first
+        pay_rev = min(revolver, sweep)
+        revolver -= pay_rev
+        cash -= pay_rev
+        
+        # remaining to TLB
+        sweep -= pay_rev
+        
+        pay_tlb = min(tlb, sweep)
+        tlb -= pay_tlb
+        cash -= pay_tlb
 
         debt_repaid = pay_rev + pay_tlb
+
+        cash_cap_pct = params.get("cash_cap_pct", 0.10)
+        max_cash = cash_cap_pct * rev
+        cash = min(cash, max_cash)
 
         rows.append({
             "Year":         i + 1,
