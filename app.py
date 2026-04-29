@@ -752,7 +752,14 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
     cats = []
     current_section = None
     for item in df["Line Item"].fillna("").astype(str):
-        x   = item.lower().strip()
+        # Clean junk + normalize
+        x = re.sub(r"[^a-z0-9\s]", " ", str(item).lower())
+        x = re.sub(r"\s+", " ", x).strip()
+        
+        # 🚨 REMOVE section headers embedded in same line
+        for trigger in BS_SECTION_TRIGGERS.keys():
+            if x.startswith(trigger):
+                x = x.replace(trigger, "").strip()
         cat = "Other"
 
         for trigger, section in BS_SECTION_TRIGGERS.items():
