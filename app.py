@@ -1641,7 +1641,7 @@ if pl_metrics:
         # ── Deleveraging — Debt Paydown ─────────────────────────────
         st.subheader("📉 Deleveraging — Debt Paydown")
         
-        initial_debt = returns["Debt Financing"]  # from run_lbo
+        initial_debt = returns["Total Debt"]
         final_debt = lbo_df.iloc[-1]["TLB"] + lbo_df.iloc[-1]["Revolver"]
         debt_repaid = initial_debt - final_debt
         
