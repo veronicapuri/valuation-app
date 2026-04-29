@@ -1,14 +1,14 @@
-# SME VALUATION & LBO TOOL — PHASE 1 (PRODUCTION-READY INGESTION + NORMALISATION)
+# SME VALUATION & LBO TOOL — PHASE 1 (IMPROVED PARSING)
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re, io
+import re
 
 st.set_page_config(layout="wide", page_title="SME Deal Tool", page_icon="📊")
 
 # =========================
-# FILE INGESTION (SIMPLIFIED + ROBUST)
+# FILE INGESTION
 # =========================
 def read_file(file):
     name = file.name.lower()
@@ -19,20 +19,58 @@ def read_file(file):
     return None
 
 # =========================
-# CLEANING LOGIC
+# PARSING HELPERS
 # =========================
+AMOUNT_RE = re.compile(r"(\(?-?[\d,]+(?:\.\d+)?\)?)")
+
 def parse_amount(x):
     try:
         x = str(x).replace(",", "").replace("(", "-").replace(")", "")
         return float(re.sub(r"[^0-9.-]", "", x))
     except:
         return 0
-        
+
+# Extract label + amount from messy single column
+
+def extract_line(line):
+    line = str(line).strip()
+    if not line:
+        return None
+
+    matches = list(AMOUNT_RE.finditer(line))
+    if not matches:
+        return None
+
+    # take last number as amount
+    match = matches[-1]
+    amount_raw = match.group()
+    amount = parse_amount(amount_raw)
+
+    label = line[:match.start()].strip()
+
+    if not label:
+        return None
+
+    return label, amount
+
+# =========================
+# SMART CLEAN (UPGRADED)
+# =========================
 def smart_clean(df):
     df = df.dropna(how="all").fillna("")
     df.columns = [f"c{i}" for i in range(len(df.columns))]
 
-    # detect numeric column
+    # CASE 1: single column → parse lines
+    if len(df.columns) == 1:
+        rows = []
+        for val in df.iloc[:,0]:
+            parsed = extract_line(val)
+            if parsed:
+                rows.append(parsed)
+
+        return pd.DataFrame(rows, columns=["Line Item","Amount"])
+
+    # CASE 2: multi-column → detect best numeric column
     best_col = None
     best_score = -1
 
@@ -43,14 +81,8 @@ def smart_clean(df):
             best_score = score
             best_col = col
 
-    # 🚨 FIX: handle edge case
     other_cols = [c for c in df.columns if c != best_col]
-
-    if not other_cols:
-        # fallback: assume first column is label
-        label_col = df.columns[0]
-    else:
-        label_col = other_cols[0]
+    label_col = other_cols[0] if other_cols else df.columns[0]
 
     result = pd.DataFrame({
         "Line Item": df[label_col].astype(str),
@@ -71,7 +103,7 @@ def classify_simple(label):
     if any(k in x for k in ["revenue","sales","turnover","income"]):
         return "Revenue"
 
-    if any(k in x for k in ["cost of","cogs","direct cost","cost of sales"]):
+    if any(k in x for k in ["cost of","cogs","direct cost","subcontract"]):
         return "COGS"
 
     if any(k in x for k in ["depreci","amort"]):
@@ -86,7 +118,6 @@ def classify_simple(label):
     if any(k in x for k in ["other income","grant","gain"]):
         return "Other Income"
 
-    # everything else = OpEx
     return "OpEx"
 
 # =========================
@@ -98,7 +129,6 @@ def compute_metrics(df, addbacks=0):
     rev = s("Revenue")
     cogs = s("COGS")
     opex = s("OpEx")
-    da = s("D&A")
 
     ebitda = rev - cogs - (opex - addbacks)
 
@@ -111,64 +141,34 @@ def compute_metrics(df, addbacks=0):
 # =========================
 # UI
 # =========================
-st.title("📊 SME Deal Tool — Phase 1")
-st.caption("Upload financials → clean → classify → normalise EBITDA")
+st.title("📊 SME Deal Tool — Improved Parsing")
 
-# Upload
-st.header("Step 1 — Upload P&L")
-file = st.file_uploader("Upload P&L (Excel or CSV)", type=["xlsx","xls","csv"])
+file = st.file_uploader("Upload P&L", type=["xlsx","xls","csv"])
 
 if file:
     raw = read_file(file)
     df = smart_clean(raw)
 
-    # classification
+    st.subheader("DEBUG — Parsed Data")
+    st.dataframe(df)
+
     df["Category"] = df["Line Item"].apply(classify_simple)
 
-    st.header("Step 2 — Review & Fix Classification")
-    df = st.data_editor(
-        df,
-        column_config={
-            "Category": st.column_config.SelectboxColumn(options=PL_CATEGORIES)
-        },
-        use_container_width=True
-    )
+    st.subheader("Edit Classification")
+    df = st.data_editor(df, use_container_width=True)
+
     st.subheader("Category Summary")
-    summary = df.groupby("Category")["Amount"].sum()
-    st.write(summary)
-    
-    # =========================
-    # NORMALISATION
-    # =========================
-    st.header("Step 3 — EBITDA Normalisation")
+    st.write(df.groupby("Category")["Amount"].sum())
 
-    col1, col2, col3 = st.columns(3)
+    # Normalisation
+    owner = st.number_input("Owner adj", 0)
+    oneoff = st.number_input("One-off", 0)
+    personal = st.number_input("Personal", 0)
 
-    with col1:
-        owner_adj = st.number_input("Owner salary adjustment", 0)
-    with col2:
-        one_off = st.number_input("One-off costs", 0)
-    with col3:
-        personal = st.number_input("Personal expenses", 0)
-
-    addbacks = owner_adj + one_off + personal
+    addbacks = owner + oneoff + personal
 
     metrics = compute_metrics(df, addbacks)
 
-    # =========================
-    # OUTPUT
-    # =========================
-    st.header("Step 4 — Results")
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Revenue", f"${metrics['Revenue']:,.0f}")
-    col2.metric("EBITDA", f"${metrics['EBITDA']:,.0f}")
-    col3.metric("EBITDA Margin", f"{metrics['EBITDA Margin']*100:.1f}%")
-
-    st.subheader("EBITDA Bridge")
-    st.write({
-        "Reported EBITDA": metrics["EBITDA"] - addbacks,
-        "Add-backs": addbacks,
-        "Adjusted EBITDA": metrics["EBITDA"]
-    })
+    st.metric("Revenue", f"${metrics['Revenue']:,.0f}")
+    st.metric("EBITDA", f"${metrics['EBITDA']:,.0f}")
+    st.metric("Margin", f"{metrics['EBITDA Margin']*100:.1f}%")
