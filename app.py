@@ -690,7 +690,8 @@ def smart_clean(df: pd.DataFrame):
     )]
     result = result[~result["Line Item"].str.fullmatch(r"[\d\s.,\-()%\[\]]+")]
     result = result.reset_index(drop=True)
-    result = merge_multiline_rows(result)
+    # DO NOT merge rows
+    result = result.reset_index(drop=True)
     return result
 
 
