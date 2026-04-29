@@ -1627,7 +1627,8 @@ if pl_metrics:
 
         entry_ev = returns["Entry EV"]
         equity_in = returns["Equity In"]
-        debt_used = entry_ev - equity_in
+        net_debt_bs = debt_bs - cash_bs
+        debt_used = entry_ev - equity_in + net_debt_bs
 
         c1, c2 = st.columns(2)
         c1.metric("💵 Your Cash Invested", fmt(equity_in))
