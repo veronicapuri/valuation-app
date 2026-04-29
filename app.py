@@ -1384,7 +1384,7 @@ if pl_file:
                 column_config={
                     "Category": st.column_config.SelectboxColumn(
                         "Category",
-                        options=["Revenue", "COGS", "OpEx", "D&A", "Interest", "Tax", "Ignore"],
+                        options=["Revenue", "COGS", "OpEx", "D&A", "Interest", "Other Income", "Tax", "Ignore"],
                     )
                 },
             )
