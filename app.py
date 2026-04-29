@@ -1188,7 +1188,7 @@ for k, v in _defaults.items():
 st.markdown("""
 <style>
 section[data-testid="stSidebar"] > div:first-child {
-    padding-top: 0.5rem;
+    padding-top: 0.2rem;
 }
 </style>
 """, unsafe_allow_html=True)
