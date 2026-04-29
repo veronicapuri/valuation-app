@@ -931,6 +931,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
             "CapEx":        capex,
             "ΔNWC":         delta_nwc,
             "FCF":          fcf,
+            "Debt Repaid":  debt_repaid,
             "TLB":          tlb,
             "Revolver":     revolver,
             "Cash":         cash,
@@ -993,7 +994,8 @@ FMT_LBO = {
     "Revenue": "${:,.0f}", "EBITDA": "${:,.0f}", "EBITDA Margin": "{:.1%}",
     "Interest": "${:,.0f}", "Tax": "${:,.0f}", "CapEx": "${:,.0f}",
     "ΔNWC": "${:,.0f}", "FCF": "${:,.0f}", "TLB": "${:,.0f}",
-    "Revolver": "${:,.0f}", "Cash": "${:,.0f}", "Net Debt": "${:,.0f}",
+    "Revolver": "${:,.0f}", "Debt Repaid": "${:,.0f}",
+    "Cash": "${:,.0f}", "Net Debt": "${:,.0f}",
 }
 
 
