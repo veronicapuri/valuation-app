@@ -27,8 +27,7 @@ def parse_amount(x):
         return float(re.sub(r"[^0-9.-]", "", x))
     except:
         return 0
-
-
+        
 def smart_clean(df):
     df = df.dropna(how="all").fillna("")
     df.columns = [f"c{i}" for i in range(len(df.columns))]
@@ -44,7 +43,14 @@ def smart_clean(df):
             best_score = score
             best_col = col
 
-    label_col = [c for c in df.columns if c != best_col][0]
+    # 🚨 FIX: handle edge case
+    other_cols = [c for c in df.columns if c != best_col]
+
+    if not other_cols:
+        # fallback: assume first column is label
+        label_col = df.columns[0]
+    else:
+        label_col = other_cols[0]
 
     result = pd.DataFrame({
         "Line Item": df[label_col].astype(str),
