@@ -997,7 +997,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         equity_rollover  = base_equity * equity_pct
         min_sponsor_eq   = base_equity * sponsor_ownership + txn_costs
 
-        equity_in = sum(payment_schedule) + txn_costs - equity_rollover
+        equity_in = entry_ev + net_debt_bs + txn_costs - total_debt - equity_rollover
         equity_in = max(equity_in, min_sponsor_eq)
 
         # FIX F2: net_debt_bs must be included when back-solving total debt
