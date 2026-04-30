@@ -1003,7 +1003,7 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         # FIX F2: net_debt_bs must be included when back-solving total debt
         # under the payment plan.  The original omitted it, understating how
         # much debt the deal carries.
-        total_debt = max(0.0, entry_ev + net_debt_bs + txn_costs - equity_in - equity_rollover)
+        total_debt = entry_ev * effective_leverage
 
         mezz_actual       = min(mezz_amount, total_debt)
         senior_actual     = max(0.0, total_debt - mezz_actual)
