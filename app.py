@@ -485,6 +485,37 @@ def _parse_line_to_label_amount(line: str):
     
     return label, values
 
+def _parse_line_multi_amount(line: str):
+    line = line.strip()
+    if not line:
+        return None
+
+    found = [(m.start(), m.group()) for m in _AMOUNT_RE.finditer(line)]
+    if not found:
+        return None
+
+    def _to_float(s):
+        s = s.replace(",", "").replace("(", "-").replace(")", "")
+        try:
+            return float(s)
+        except:
+            return 0.0
+
+    parsed = [(pos, raw, _to_float(raw)) for pos, raw in found]
+
+    # label = everything before first number
+    first_pos = parsed[0][0]
+    label = _strip_note_refs(line[:first_pos].strip())
+    label = re.sub(r"[|_]{2,}", "", label).strip()
+    label = re.sub(r"\s{2,}", " ", label)
+
+    if not label:
+        return None
+
+    values = [v for _, _, v in parsed]
+
+    return label, values
+
 def _ocr_pdf(file_bytes: bytes):
     if not PDF_OCR:
         st.error("📦 OCR requires pdf2image + pytesseract + Pillow.")
