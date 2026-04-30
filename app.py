@@ -489,30 +489,46 @@ def _ocr_pdf(file_bytes: bytes):
     if not PDF_OCR:
         st.error("📦 OCR requires pdf2image + pytesseract + Pillow.")
         return None
+
     try:
         images = convert_from_bytes(file_bytes, dpi=300)
     except Exception as e:
         st.error(f"PDF→image conversion failed: {e}")
         return None
 
-    rows = []
+    parsed_rows = []
+
     for img in images:
         img  = _preprocess_image_for_ocr(img)
         text = pytesseract.image_to_string(img, config="--psm 6")
+
         for line in text.splitlines():
-            parsed = _parse_line_to_label_amount(line)
+            parsed = _parse_line_multi_amount(line)  # ← your new function
+
             if parsed:
-                rows.append(list(parsed))
+                label, values = parsed
+                parsed_rows.append((label, values))
             else:
                 clean = re.sub(r"[|_]{2,}", "", line).strip()
                 if clean:
-                    rows.append([clean, "0"])
+                    parsed_rows.append((clean, []))
 
-    if not rows:
+    if not parsed_rows:
         st.error("OCR produced no usable rows. Check PDF quality.")
         return None
-    return pd.DataFrame(rows, columns=["c0", "c1"], dtype=str)
 
+    # 🔥 Determine max number of value columns
+    max_vals = max(len(v) for _, v in parsed_rows)
+
+    rows = []
+    for label, values in parsed_rows:
+        # pad missing values with 0
+        padded = values + [0.0] * (max_vals - len(values))
+        rows.append([label] + padded)
+
+    cols = ["c0"] + [f"c{i+1}" for i in range(max_vals)]
+
+    return pd.DataFrame(rows, columns=cols)
 
 def read_any_file(uploaded_file):
     name = uploaded_file.name.lower()
@@ -715,7 +731,11 @@ def load_and_combine(files, amount_col_override: str = None):
     if not dfs:
         return None
     df = pd.concat(dfs, ignore_index=True)
-    df = df.groupby("Line Item", as_index=False)["Amount"].sum()
+    
+    # 🔥 group ALL numeric columns
+    value_cols = [c for c in df.columns if c != "Line Item"]
+    
+    df = df.groupby("Line Item", as_index=False)[value_cols].sum()
     return df
 
 
@@ -1553,12 +1573,30 @@ if pl_files:
     # Now load with chosen column
     for f in pl_files:
         f.seek(0)
-
-    df_pl = load_and_combine(pl_files, amount_col_override=st.session_state.get("pl_year_col"))
-
-    if df_pl is None:
+    
+    df_raw = load_and_combine(pl_files, amount_col_override=st.session_state.get("pl_year_col"))
+    
+    if df_raw is None:
         st.error("P&L could not be parsed.")
     else:
+        # 🔥 NEW: handle multi-column data BEFORE classification
+        if df_raw.shape[1] > 2:
+            selected_col = st.selectbox(
+                "📅 Select year / column to model",
+                options=df_raw.columns[1:]
+            )
+    
+            df_pl = pd.DataFrame({
+                "Line Item": df_raw["Line Item"],
+                "Amount": df_raw[selected_col]
+            })
+        else:
+            df_pl = df_raw.rename(columns={
+                df_raw.columns[0]: "Line Item",
+                df_raw.columns[1]: "Amount"
+            })
+    
+        # ✅ Now classify AFTER fixing structure
         df_pl = classify_pl(df_pl, use_ai=use_ai, api_key=api_key or "")
 
     st.markdown("---")
