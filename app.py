@@ -1845,7 +1845,6 @@ if pl_metrics:
                 chart_debt_paydown(lbo_df)
             with ch2:
                 chart_fcf_ebitda(lbo_df)
-            chart_moic_waterfall(returns)
         else:
             st.info("Install plotly for charts: `pip install plotly`")
 
