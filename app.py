@@ -1306,7 +1306,7 @@ else:
 
 st.sidebar.subheader("Capital Structure")
 leverage_pct = st.sidebar.slider(
-    "Leverage % of Entry EV", 20, 80,
+    "Leverage % of Entry EV", 0, 100,
     value=int(st.session_state.cal_leverage),
 ) / 100
 tlb_rate = st.sidebar.slider("TLB Interest Rate %", 0, 20, 7) / 100
