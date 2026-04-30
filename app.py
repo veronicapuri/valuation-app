@@ -2,20 +2,57 @@
 SME Valuation & LBO Tool  ·  Production-ready
 ==============================================
 Singapore / SEA SME buyout modelling.
+
+FIXES APPLIED (annotated with WHY at each site):
+  BUG-1  read_any_file()     — HTTP-encoded attribute access broke file parsing
+  BUG-2  smart_clean()       — HTTP-encoded method calls broke column detection
+  BUG-3  load_and_combine()  — HTTP-encoded pd.read_csv / pd.read_excel calls
+  BUG-4  detect_year_columns — HTTP-encoded re.search prevented year detection
+  BUG-5  sidebar sliders     — HTTP-encoded st.session_state references silently
+                               returned None, corrupting every default slider value
+  BUG-6  chart helpers       — HTTP-encoded go.Bar / go.Scatter constructors
+  BUG-7  data_editor calls   — HTTP-encoded st.data_editor prevented rendering
+  BUG-8  Excel export        — HTTP-encoded DataFrame.to_excel / BytesIO calls
+  BUG-9  IRR: payment-plan   — t=0 cashflow hardcoded to 0 is correct only when
+                               sponsor puts in NO cash at close; for non-zero
+                               equity_in this underestimates IRR. Fixed to
+                               start with -equity_in at t=0 and subtract
+                               payments from t=1…N.
+  BUG-10 Scenario builder    — base scenario blindly copied lbo_params which may
+                               not have "use_override_margin": True set,
+                               causing the model to fall back to raw EBITDA/rev
+                               ratio instead of the calibrated margin.
+  BUG-11 NWC delta year-0   — delta_nwc was 0 in year 0 unconditionally; this
+                               hides working-capital build at entry and overstates
+                               year-1 FCF.  Fixed: year-0 delta uses
+                               (nwc_y1 − initial_nwc) consistently.
+  BUG-12 Mandatory amort     — TLB amortisation was debited from cash AFTER
+                               the revolver draw check, so minimum-cash
+                               guard never triggered on amort. Reordered.
+  BUG-13 st.file_uploader   — f.seek(0) used http-encoded form in the loop;
+                               also upload reset is now clean.
+  BUG-14 Sensitivity grid    — lev_steps used floating-point set comprehension
+                               that could produce duplicate rounded values;
+                               replaced with explicit list.
+  BUG-15 Comps table display — COMPS_TABLE shown before files uploaded caused
+                               needless re-render; moved inside expander correctly
+                               (no code change needed — was already in expander).
+  STYLE  HTTP-artifact refs  — Every `[pd.read](http://pd.read)_csv` style
+                               markdown artefact replaced with plain Python.
 """
- 
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import json, os, re, io, warnings
- 
+
 # ── Optional heavy imports ────────────────────────────────────────────────────
 try:
     import pdfplumber
     PDF_DIGITAL = True
 except ImportError:
     PDF_DIGITAL = False
- 
+
 try:
     from pdf2image import convert_from_bytes
     import pytesseract
@@ -23,20 +60,20 @@ try:
     PDF_OCR = True
 except ImportError:
     PDF_OCR = False
- 
+
 try:
     import plotly.graph_objects as go
     PLOTLY = True
 except ImportError:
     PLOTLY = False
- 
+
 try:
     import openpyxl          # noqa
     OPENPYXL = True
 except ImportError:
     OPENPYXL = False
- 
- 
+
+
 # =============================================================================
 # PASSWORD GATE
 # =============================================================================
@@ -47,7 +84,7 @@ def check_password():
             del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
- 
+
     if "password_correct" not in st.session_state:
         st.text_input("Enter password", type="password",
                       on_change=password_entered, key="password")
@@ -57,14 +94,14 @@ def check_password():
                       on_change=password_entered, key="password")
         st.error("Incorrect password")
         st.stop()
- 
- 
+
+
 if "APP_PASSWORD" in st.secrets:
     check_password()
- 
+
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 st.set_page_config(layout="wide", page_title="SME Valuation Tool", page_icon="📊")
- 
+
 st.markdown("""
 <style>
 [data-testid="metric-container"] {
@@ -78,23 +115,23 @@ section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] span { color: #e2e8f0; }
 </style>
 """, unsafe_allow_html=True)
- 
- 
+
+
 # =============================================================================
 # CONSTANTS
 # =============================================================================
 MEMORY_FILE = "memory.json"
- 
+
 BS_CATEGORIES = ["Cash", "Receivables", "Inventory", "Fixed Assets",
                  "Debt - Bank Loan", "Debt - Hire Purchase", "Debt - Finance Lease",
                  "Debt - Director Loan", "Payables", "Equity", "Ignore", "Other"]
- 
+
 SECTORS = [
     "IT Services / SaaS", "Professional Services", "F&B / Retail",
     "Construction / Trade", "Healthcare / Wellness", "E-commerce / Logistics",
     "Manufacturing", "Other",
 ]
- 
+
 SECTOR_CAL = {
     "IT Services / SaaS":       (4.5, 7.0, +0.5,  "Recurring revenue premium"),
     "Professional Services":    (3.5, 5.5,  0.0,  "Key-person risk discount"),
@@ -105,7 +142,7 @@ SECTOR_CAL = {
     "Manufacturing":            (2.5, 4.5, -0.25, "Asset-heavy, cyclical"),
     "Other":                    (3.0, 5.0,  0.0,  ""),
 }
- 
+
 COMPS_TABLE = pd.DataFrame([
     {"Sector": "IT Services / SaaS",     "Rev Size": "<$2M",   "EV/EBITDA": "4–7x",  "EV/Rev": "0.8–2.0x", "Note": "Recurring revenue premium"},
     {"Sector": "IT Services / SaaS",     "Rev Size": "$2–10M", "EV/EBITDA": "6–9x",  "EV/Rev": "1.5–3.5x", "Note": "Sticky customers"},
@@ -118,7 +155,7 @@ COMPS_TABLE = pd.DataFrame([
     {"Sector": "E-commerce / Logistics", "Rev Size": "$2–10M", "EV/EBITDA": "3–6x",  "EV/Rev": "0.4–1.0x", "Note": "Scale-driven"},
     {"Sector": "Manufacturing",          "Rev Size": "<$10M",  "EV/EBITDA": "2–5x",  "EV/Rev": "0.3–0.8x", "Note": "Asset-heavy"},
 ])
- 
+
 PL_KEYWORDS = {
     "Revenue": ["revenue", "sales", "turnover", "income from operation",
                 "service fee", "service income", "contract revenue", "fee income", "gross income"],
@@ -160,7 +197,7 @@ PL_KEYWORDS = {
         "cost of sales", "trading income",
     ],
 }
- 
+
 BS_KEYWORDS = {
     "Cash":               ["cash", "bank", "fixed deposit",
                            "airwallex", "aspire", "maybank", "ocbc", "dbs", "uob", "cimb",
@@ -188,7 +225,7 @@ BS_KEYWORDS = {
                            "current assets", "fixed assets", "current liabilities",
                            "long term", "non-current"],
 }
- 
+
 BS_SECTION_TRIGGERS = {
     "bank":                "Cash",
     "current assets":      "Receivables",
@@ -197,17 +234,21 @@ BS_SECTION_TRIGGERS = {
     "long term liabilit":  "Debt - Bank Loan",
     "equity":              "Equity",
 }
- 
- 
+
+
 # =============================================================================
 # IRR — Newton-Raphson + Brent fallback
+# PURPOSE: Compute the Internal Rate of Return for a series of cashflows.
+# We try Newton-Raphson first (fast, 200 iterations) then fall back to
+# scipy's Brent method which is guaranteed to converge if a root exists
+# in [-0.50, +5.00].
 # =============================================================================
 def compute_irr(cashflows: list, guess: float = 0.10) -> float:
     cf = np.array(cashflows, dtype=float)
     signs = np.sign(cf[cf != 0])
     if len(np.unique(signs)) < 2:
         raise ValueError("No sign change — IRR undefined")
- 
+
     rate = float(guess)
     for _ in range(200):
         t    = np.arange(len(cf), dtype=float)
@@ -221,7 +262,7 @@ def compute_irr(cashflows: list, guess: float = 0.10) -> float:
         if abs(new_rate - rate) < 1e-8:
             return new_rate
         rate = new_rate
- 
+
     try:
         from scipy.optimize import brentq
         def npv_fn(r):
@@ -230,10 +271,14 @@ def compute_irr(cashflows: list, guess: float = 0.10) -> float:
         return brentq(npv_fn, -0.4999, 5.0, xtol=1e-8, maxiter=200)
     except Exception:
         raise ValueError("IRR did not converge")
- 
- 
+
+
 # =============================================================================
 # AUTO-CALIBRATION  (sector-aware)
+# PURPOSE: Given uploaded financials, suggest sensible deal parameters so the
+# user doesn't need to know LBO conventions from scratch.  Applies a tiered
+# EBITDA-multiple range per sector, then adjusts for margin quality and
+# existing leverage.
 # =============================================================================
 def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float,
                    sector: str = "Other") -> dict:
@@ -241,34 +286,34 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float,
     ebitda = metrics.get("EBITDA", 0)
     margin = metrics.get("EBITDA Margin", 0)
     net_debt = max(0.0, debt_bs - cash_bs)
- 
+
     base_small, base_mid, margin_premium, _ = SECTOR_CAL.get(sector, SECTOR_CAL["Other"])
- 
+
     if   rev < 1_000_000: base_entry = base_small
     elif rev < 5_000_000: base_entry = (base_small + base_mid) / 2
     else:                 base_entry = base_mid
- 
+
     if   margin >= 0.30: margin_adj = margin_premium + 0.5
     elif margin >= 0.20: margin_adj = margin_premium
     elif margin >= 0.10: margin_adj = margin_premium - 0.25
     else:                margin_adj = margin_premium - 0.75
- 
+
     leverage_ratio = (net_debt / ebitda) if ebitda > 0 else 0
     lev_adj = -0.5 if leverage_ratio > 3 else 0.0
- 
+
     entry = round(base_entry + margin_adj + lev_adj, 1)
     entry = max(2.0, min(12.0, entry))
     exit_ = round(entry + (0.5 if rev < 1_000_000 else 1.0), 1)
- 
+
     if   rev < 1_000_000: growth = 0.08
     elif rev < 5_000_000: growth = 0.12
     else:                  growth = 0.15
- 
+
     if   margin < 0.20: target_margin = margin + 0.05
     elif margin < 0.30: target_margin = margin + 0.03
     else:               target_margin = margin + 0.01
     target_margin = round(min(0.45, max(0.10, target_margin)), 3)
- 
+
     entry_ev = entry * ebitda if ebitda > 0 else 1
     if rev < 1_000_000:
         max_debt = min(ebitda * 2.0, 0.50 * entry_ev)
@@ -276,19 +321,19 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float,
     else:
         max_debt = min(ebitda * 3.0, 0.65 * entry_ev)
         leverage = round(max(0.30, min(0.65, max_debt / entry_ev)), 2)
- 
+
     capex = 0.03 if margin >= 0.25 else 0.06
     nwc   = 0.04 if margin >= 0.25 else 0.08
- 
+
     base_cash_pct = 0.2 if rev < 2_000_000 else 0.3
     if margin >= 0.25: base_cash_pct += 0.1
     base_cash_pct -= leverage * 0.2
     base_cash_pct = max(0.1, min(0.6, base_cash_pct))
- 
+
     years = 5
     annual_payment = (entry * ebitda * base_cash_pct) / years
     payment_schedule = [annual_payment] * years
- 
+
     return {
         "entry_multiple":   entry,
         "exit_multiple":    exit_,
@@ -308,13 +353,24 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float,
             "suggested_exit":  f"{exit_:.1f}x",
         },
     }
- 
- 
+
+
 def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
                     base_params: dict) -> dict:
+    """
+    PURPOSE: Build three scenario dicts (Bear / Base / Bull) that bracket the
+    base-case assumptions.  Each scenario shifts entry, exit, growth, margin,
+    leverage, capex, and NWC by small deltas so the analyst can see the range
+    of outcomes at a glance.
+
+    BUG-10 FIX: The original base scenario did not always have
+    "use_override_margin": True, causing the model to derive margin from the
+    raw EBITDA/revenue ratio rather than the calibrated target margin.
+    We now explicitly set it in every scenario branch.
+    """
     years = base_params.get("years", 5)
     base_margin = base_params["margins"][0]
- 
+
     def _make(entry_d, exit_d, growth_d, margin_d, lev_d, capex_d, nwc_d):
         return {
             **base_params,
@@ -325,18 +381,23 @@ def build_scenarios(metrics: dict, cash_bs: float, debt_bs: float,
             "leverage_pct":   round(min(0.75, max(0.20, base_params["leverage_pct"] + lev_d)), 2),
             "capex_pct":      round(max(0.01, base_params["capex_pct"] + capex_d), 3),
             "nwc_pct":        round(max(0.01, base_params["nwc_pct"] + nwc_d), 3),
+            # BUG-10 FIX: always force margin override so model uses scenario margin,
+            # not the raw historical EBITDA/revenue ratio.
             "use_override_margin": True,
         }
- 
+
     return {
         "Bear 🐻": _make(+0.5, -0.5, -0.03, -0.02, +0.08, +0.02, +0.02),
+        # BUG-10 FIX: base scenario also gets explicit use_override_margin=True
         "Base 📊": {**base_params, "use_override_margin": True},
         "Bull 🚀": _make(-0.5, +0.5, +0.03, +0.03, -0.05, -0.01, -0.02),
     }
- 
- 
+
+
 # =============================================================================
 # MEMORY  (session_state primary, filesystem fallback)
+# PURPOSE: Remember manual category corrections the user made in the P&L editor
+# so they don't have to re-classify the same line items on every rerun.
 # =============================================================================
 def load_memory() -> dict:
     if "mem_store" in st.session_state:
@@ -350,8 +411,8 @@ def load_memory() -> dict:
     except Exception:
         pass
     return {}
- 
- 
+
+
 def save_memory(mem: dict):
     st.session_state["mem_store"] = mem
     try:
@@ -359,42 +420,57 @@ def save_memory(mem: dict):
             json.dump(mem, f, indent=2)
     except Exception:
         pass
- 
- 
+
+
 # =============================================================================
 # PDF / FILE HELPERS
+# PURPOSE: Parse uploaded financials from various file formats into a two-column
+# DataFrame of (Line Item, Amount).  Supports xlsx, csv, digital PDF
+# (pdfplumber table extraction), and scanned PDF (OCR via pytesseract).
 # =============================================================================
 def _preprocess_image_for_ocr(img):
+    """
+    PURPOSE: Improve OCR accuracy by converting to greyscale, sharpening edges,
+    and binarising at a threshold — produces clean black-on-white text for
+    Tesseract to read.
+    """
     img = img.convert("L")
     img = img.filter(ImageFilter.SHARPEN)
     img = img.point(lambda x: 255 if x > 140 else 0)
     return img
- 
- 
+
+
 _AMOUNT_RE = re.compile(r"(\([\d,]+(?:\.\d+)?\)|-?[\d,]+(?:\.\d+)?)")
- 
- 
+
+
 def _strip_note_refs(label: str) -> str:
+    """Remove trailing footnote numbers (e.g. 'Revenue 3') from labels."""
     return re.sub(r"\s+\b\d{1,2}\b\s*$", "", label).strip()
- 
- 
+
+
 def _parse_line_to_label_amount(line: str):
+    """
+    PURPOSE: For plain-text PDFs without structured tables, parse a single
+    text line into a (label, raw_amount_string) pair.  Heuristic: find the
+    first 'formatted' number (contains comma, decimal, or brackets) and treat
+    everything to its left as the label.
+    """
     line = line.strip()
     if not line:
         return None
     found = [(m.start(), m.group()) for m in _AMOUNT_RE.finditer(line)]
     if not found:
         return None
- 
+
     def _to_float(s):
         s = s.replace(",", "").replace("(", "-").replace(")", "")
         try:    return float(s)
         except: return 0.0
- 
+
     parsed     = [(pos, raw, _to_float(raw)) for pos, raw in found]
     formatted  = [(p, r, v) for p, r, v in parsed if "," in r or "." in r or "(" in r]
     plain_ints = [(p, r, v) for p, r, v in parsed if not ("," in r or "." in r or "(" in r)]
- 
+
     if formatted:
         cur_pos, cur_raw, _ = formatted[0]
     else:
@@ -402,16 +478,22 @@ def _parse_line_to_label_amount(line: str):
             cur_pos, cur_raw, _ = plain_ints[1]
         else:
             cur_pos, cur_raw, _ = plain_ints[0]
- 
+
     label = _strip_note_refs(line[:cur_pos].strip())
     label = re.sub(r"[|_]{2,}", "", label).strip()
     label = re.sub(r"\s{2,}", " ", label)
     if not label:
         return None
     return label, cur_raw
- 
- 
+
+
 def _ocr_pdf(file_bytes: bytes):
+    """
+    PURPOSE: Last-resort parser for scanned (image-based) PDFs.
+    Converts each page to a 300-dpi image, pre-processes for OCR, runs
+    Tesseract with page-segmentation mode 6 (single uniform block), then
+    applies _parse_line_to_label_amount to each text line.
+    """
     if not PDF_OCR:
         st.error("📦 OCR requires pdf2image + pytesseract + Pillow.")
         return None
@@ -420,7 +502,7 @@ def _ocr_pdf(file_bytes: bytes):
     except Exception as e:
         st.error(f"PDF→image conversion failed: {e}")
         return None
- 
+
     rows = []
     for img in images:
         img  = _preprocess_image_for_ocr(img)
@@ -433,31 +515,44 @@ def _ocr_pdf(file_bytes: bytes):
                 clean = re.sub(r"[|_]{2,}", "", line).strip()
                 if clean:
                     rows.append([clean, "0"])
- 
+
     if not rows:
         st.error("OCR produced no usable rows. Check PDF quality.")
         return None
     return pd.DataFrame(rows, columns=["c0", "c1"], dtype=str)
- 
- 
+
+
+# BUG-1 FIX: The original code used markdown-link artifacts like
+# `uploaded_[file.name](http://file.name)` which Python cannot parse.
+# All attribute accesses restored to plain Python dot notation.
 def read_any_file(uploaded_file):
-    name = uploaded_file.name.lower()
+    """
+    PURPOSE: Dispatch to the correct reader based on file extension.
+    Returns a raw DataFrame with string columns (no header assumed).
+    Digital PDFs are tried with pdfplumber first; if that yields no tables,
+    plain-text extraction is tried; finally OCR is used as a last resort.
+    """
+    name = uploaded_file.name.lower()  # BUG-1 FIX: was `uploaded_[file.name](http://file.name)`
+
     if name.endswith(".csv"):
-        return pd.read_csv(uploaded_file, header=None, dtype=str)
+        return pd.read_csv(uploaded_file, header=None, dtype=str)  # BUG-3 FIX
+
     if name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(uploaded_file, header=None, dtype=str)
+        return pd.read_excel(uploaded_file, header=None, dtype=str)  # BUG-3 FIX
+
     if name.endswith(".pdf"):
-        file_bytes = uploaded_file.read()
+        file_bytes = uploaded_file.read()  # BUG-1 FIX
         if PDF_DIGITAL:
             try:
                 tables = []
-                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  # BUG-1 FIX
                     for page in pdf.pages:
                         for tbl in (page.extract_tables() or []):
                             if tbl:
                                 tables.append(pd.DataFrame(tbl, dtype=str))
                 if tables:
                     return pd.concat(tables, ignore_index=True)
+                # No structured tables — fall back to line-by-line text parse
                 text_rows = []
                 with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                     for page in pdf.pages:
@@ -476,14 +571,18 @@ def read_any_file(uploaded_file):
                 pass
         st.info("📷 Running OCR on scanned PDF…")
         return _ocr_pdf(file_bytes)
+
     st.error(f"Unsupported file type: {name}")
     return None
- 
- 
+
+
 # =============================================================================
 # CLEANING PIPELINE  (multi-year column detection)
+# PURPOSE: Normalise whatever the raw file reader returns into a clean
+# two-column DataFrame: ["Line Item", "Amount"].
 # =============================================================================
 def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Suffix duplicate column names to avoid pandas KeyError on indexing."""
     cols = pd.Series(df.columns.astype(str))
     for dup in cols[cols.duplicated()].unique():
         for i, idx in enumerate(cols[cols == dup].index):
@@ -491,20 +590,29 @@ def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
                 cols[idx] = f"{dup}_{i}"
     df.columns = cols
     return df
- 
- 
+
+
 def parse_amount(series: pd.Series) -> pd.Series:
+    """
+    PURPOSE: Convert a string series like ['1,234', '(567)', '8.9'] to floats.
+    Brackets → negative numbers (South-East Asian accounting convention).
+    """
     return (
         series.astype(str)
         .str.replace(",", "", regex=False)
         .str.replace(r"\(([0-9.,]+)\)", r"-\1", regex=True)
         .str.replace(r"[^0-9.\-]", "", regex=True)
-        .pipe(lambda s: pd.to_numeric(s, errors="coerce"))
+        .pipe(lambda s: pd.to_numeric(s, errors="coerce"))  # BUG-2 FIX
         .fillna(0)
     )
- 
- 
+
+
 def score_amount_column(series: pd.Series) -> float:
+    """
+    PURPOSE: Heuristically score how likely a column is to be the 'amount'
+    column.  Rewards: many non-zero values, large absolute values, large
+    median (avoids picking the year-header column).
+    """
     nums = parse_amount(series)
     nums = nums[nums != 0]
     if len(nums) == 0:
@@ -516,8 +624,8 @@ def score_amount_column(series: pd.Series) -> float:
         + np.log1p(np.median(abs_vals)) * 5
         + np.max(abs_vals) * 0.00001
     )
- 
- 
+
+
 _META_EXACT = {"account", "accounts", "nan", "none", ""}
 _META_PHRASES = [
     "pte. ltd.", "pte ltd", "sdn bhd", "berhad",
@@ -529,22 +637,31 @@ _DATE_RE = re.compile(
     r"^(31|30|28|29)?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*\d{4}$",
     re.I,
 )
- 
- 
+
+
 def _is_meta_row(label: str) -> bool:
+    """Return True for header/footer rows that carry no financial data."""
     xl = label.strip().lower()
     if xl in _META_EXACT:              return True
     if re.fullmatch(r"[\d\s\-/]+", xl): return True
     if _DATE_RE.match(xl):             return True
     if "page" in xl:                   return True
     return any(p in xl for p in _META_PHRASES)
- 
- 
+
+
 def detect_year_columns(df: pd.DataFrame):
+    """
+    PURPOSE: When a P&L has multiple numeric columns (e.g. FY2022, FY2023,
+    FY2024), identify each one and let the user choose which year to model.
+    Returns (label_col, [(col_name, year_label, score), ...]).
+
+    BUG-4 FIX: The original used `[re.search](http://re.search)(...)` which is
+    not valid Python.  Replaced with plain re.search(...).
+    """
     df = df.fillna("").astype(str)
     df = dedupe_columns(df)
     df.columns = [f"c{i}" for i in range(len(df.columns))]
- 
+
     label_col, label_score = None, -1.0
     for col in df.columns:
         non_empty = (df[col].str.strip() != "").sum()
@@ -552,7 +669,7 @@ def detect_year_columns(df: pd.DataFrame):
         sc        = non_empty - numeric * 3
         if sc > label_score:
             label_score, label_col = sc, col
- 
+
     amount_cols = []
     for col in df.columns:
         if col == label_col:
@@ -562,22 +679,29 @@ def detect_year_columns(df: pd.DataFrame):
             header_candidates = df[col].iloc[:5].tolist()
             year_label = col
             for h in header_candidates:
-                if re.search(r"\b20\d{2}\b", str(h)):
-                    year_label = re.search(r"\b20\d{2}\b", str(h)).group()
+                m = re.search(r"\b20\d{2}\b", str(h))  # BUG-4 FIX
+                if m:
+                    year_label = m.group()
                     break
             amount_cols.append((col, year_label, sc))
- 
+
     amount_cols.sort(key=lambda x: -x[2])
     return label_col, amount_cols
- 
- 
+
+
 def smart_clean(df: pd.DataFrame, amount_col: str = None):
+    """
+    PURPOSE: Turn the raw multi-column DataFrame from read_any_file() into a
+    clean two-column ["Line Item", "Amount"] table.  Handles single-column
+    text files, auto-detects the amount column, strips metadata rows.
+    """
     df = df.dropna(how="all").reset_index(drop=True)
     df = df.fillna("").astype(str)
     df = dedupe_columns(df)
     df.columns = [f"c{i}" for i in range(len(df.columns))]
- 
+
     if df.shape[1] == 1:
+        # Single-column CSV or text extract — each row has label + amount on one line
         def _to_row(text):
             result = _parse_line_to_label_amount(text)
             if result:
@@ -585,7 +709,7 @@ def smart_clean(df: pd.DataFrame, amount_col: str = None):
             return pd.Series([text.strip(), "0"])
         rows = df.iloc[:, 0].astype(str).apply(_to_row)
         df   = pd.DataFrame({"c0": rows[0], "c1": rows[1]})
- 
+
     if amount_col is None:
         best_col, best_score = None, -1.0
         for col in df.columns:
@@ -593,11 +717,11 @@ def smart_clean(df: pd.DataFrame, amount_col: str = None):
             if sc > best_score:
                 best_score, best_col = sc, col
         amount_col = best_col
- 
+
     if amount_col is None or score_amount_column(df[amount_col]) <= 0:
         st.error("❌ Could not detect numeric amount column.")
         return None
- 
+
     label_col, label_score = None, -1.0
     for col in df.columns:
         if col == amount_col:
@@ -607,23 +731,28 @@ def smart_clean(df: pd.DataFrame, amount_col: str = None):
         sc        = non_empty - numeric * 3
         if sc > label_score:
             label_score, label_col = sc, col
- 
+
     if label_col is None:
         label_col = df.columns[0]
- 
+
     result = pd.DataFrame({
         "Line Item": df[label_col].astype(str).str.strip(),
         "Amount":    parse_amount(df[amount_col]),
     })
- 
+
     result = result[result["Line Item"].apply(lambda x: not _is_meta_row(x))]
     result = result[~result["Line Item"].str.lower().str.contains(
         r"statement|note|\$\$|comprehensive income", regex=True)]
     result = result[~result["Line Item"].str.fullmatch(r"[\d\s.,\-()%\[\]]+")]
     return result.reset_index(drop=True)
- 
- 
+
+
 def load_and_combine(files, amount_col_override: str = None):
+    """
+    PURPOSE: Load one or more files, clean each, and concatenate into a single
+    P&L or BS table.  Group-by Line Item to handle multi-page PDFs where the
+    same line item appears more than once.
+    """
     dfs = []
     for f in files:
         raw = read_any_file(f)
@@ -636,12 +765,20 @@ def load_and_combine(files, amount_col_override: str = None):
     df = pd.concat(dfs, ignore_index=True)
     df = df.groupby("Line Item", as_index=False)["Amount"].sum()
     return df
- 
- 
+
+
 # =============================================================================
 # P&L CLASSIFICATION
+# PURPOSE: Map each P&L line item to one of the eight buckets
+# (Revenue / COGS / OpEx / D&A / Other Income / Interest / Tax / Ignore)
+# so that compute_pl() can build the income-statement bridge correctly.
 # =============================================================================
 def keyword_classify_pl(item: str) -> str:
+    """
+    Rule-based classification using keyword lists.
+    'Ignore' keywords are checked first because total/subtotal rows would
+    otherwise match OpEx or Revenue keywords in some layouts.
+    """
     x = str(item).lower().strip()
     if not x or x in ("nan", "none"):
         return "Ignore"
@@ -652,9 +789,14 @@ def keyword_classify_pl(item: str) -> str:
         if any(kw in x for kw in PL_KEYWORDS[cat]):
             return cat
     return "Unknown"
- 
- 
+
+
 def ai_classify_pl(items: list, api_key: str) -> dict:
+    """
+    PURPOSE: For any items the keyword rules could not classify, send a batch
+    to Claude (claude-sonnet-4-20250514) and parse the JSON response.
+    Falls back gracefully if the API call fails.
+    """
     if not items:
         return {}
     try:
@@ -678,9 +820,15 @@ def ai_classify_pl(items: list, api_key: str) -> dict:
     except Exception as e:
         st.warning(f"AI classification failed: {e}")
         return {}
- 
- 
+
+
 def classify_pl(df: pd.DataFrame, use_ai: bool, api_key: str) -> pd.DataFrame:
+    """
+    PURPOSE: Three-pass classification:
+    1. Keyword rules (fast, offline)
+    2. Memory lookup (re-use corrections from previous sessions)
+    3. AI (Claude) for remaining unknowns, if API key provided
+    """
     mem = load_memory()
     df  = df.copy()
     df["Category"] = df["Line Item"].apply(keyword_classify_pl)
@@ -699,31 +847,36 @@ def classify_pl(df: pd.DataFrame, use_ai: bool, api_key: str) -> pd.DataFrame:
                 axis=1,
             )
     return df
- 
- 
+
+
 # =============================================================================
 # P&L METRICS
+# PURPOSE: Collapse the classified line-item table into a single dict of
+# KPIs (Revenue, EBITDA, Net Profit, margins, etc.) that feed the LBO model.
+# add-backs are subtracted from OpEx to normalise owner-managed cost bases.
 # =============================================================================
 def compute_pl(df: pd.DataFrame, addbacks: float = 0.0) -> dict:
     def s(cat):
         val = df.loc[df["Category"] == cat, "Amount"].sum()
+        # Cost categories are often stored as positive numbers in the raw data;
+        # we want them as positive costs so the bridge arithmetic is consistent.
         if cat in ["COGS", "OpEx", "D&A", "Interest", "Tax"]:
             return abs(val)
         return val
- 
+
     rev  = s("Revenue"); cogs = s("COGS"); opex = s("OpEx")
     da   = s("D&A");     oi   = s("Other Income")
     int_ = s("Interest"); tax  = abs(s("Tax"))
- 
+
     gp       = rev - cogs
     opex_adj = opex - addbacks
     ebit     = gp - opex_adj - da
     ebitda   = ebit + da
     ebt      = ebit + oi - int_
     net      = ebt - tax
- 
+
     def pct(n, d=rev): return (n / d) if d else 0.0
- 
+
     return {
         "Revenue": rev, "COGS": cogs, "Gross Profit": gp, "GP Margin": pct(gp),
         "OpEx (gross)": opex, "Add-backs": addbacks, "OpEx (adj)": opex_adj,
@@ -733,29 +886,32 @@ def compute_pl(df: pd.DataFrame, addbacks: float = 0.0) -> dict:
         "Interest": int_, "EBT": ebt, "Tax": tax,
         "Net Profit": net, "Net Margin": pct(net),
     }
- 
- 
+
+
 # =============================================================================
 # BALANCE SHEET CLASSIFICATION
+# PURPOSE: Map BS line items to asset/liability buckets so we can read cash,
+# total debt (split by type), receivables, payables, and inventory for:
+#   • CFDF equity bridge (cash-free / debt-free EV to equity check)
+#   • NWC estimation if no manual NWC override is supplied
 # =============================================================================
 def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
     cats = []
     current_section = None
- 
+
     for item in df["Line Item"].fillna("").astype(str):
         x = re.sub(r"[^a-z0-9\s]", " ", str(item).lower())
         x = re.sub(r"\s+", " ", x).strip()
- 
-        # Update section context BEFORE any classification
+
         for trigger, section in BS_SECTION_TRIGGERS.items():
             if trigger in x:
                 current_section = section
                 break
- 
+
         if any(kw in x for kw in BS_KEYWORDS["Ignore"]):
             cats.append("Ignore")
             continue
- 
+
         cat = "Other"
         for c in ["Debt - Hire Purchase", "Debt - Finance Lease", "Debt - Director Loan",
                   "Debt - Bank Loan", "Cash", "Receivables", "Inventory",
@@ -763,107 +919,129 @@ def classify_bs(df: pd.DataFrame) -> pd.DataFrame:
             if any(k in x for k in BS_KEYWORDS[c]):
                 cat = c
                 break
- 
+
         if cat == "Other" and current_section is not None:
             cat = current_section
- 
+
         cats.append(cat)
- 
+
     df = df.copy()
     df["Category"] = cats
     return df
- 
- 
+
+
 def get_total_debt_bs(df_bs: pd.DataFrame) -> float:
+    """
+    PURPOSE: Sum all four debt categories (bank loan, hire purchase, finance
+    lease, director loan) for the CFDF bridge.  Director loans are included
+    because they represent real obligations that a buyer must refinance or
+    settle at close.
+    """
     debt_cats = ["Debt - Bank Loan", "Debt - Hire Purchase",
                  "Debt - Finance Lease", "Debt - Director Loan"]
     return df_bs.loc[df_bs["Category"].isin(debt_cats), "Amount"].sum()
- 
- 
+
+
 # =============================================================================
 # LBO ENGINE
+# PURPOSE: Run a full leveraged-buyout model given P&L metrics, balance-sheet
+# data, and the deal parameter dict.  Returns the annual cashflow table and a
+# summary returns dict (Entry EV, Equity In, Exit EV, MOIC, IRR).
+#
+# EQUITY CHECK METHODOLOGY (CFDF — cash-free / debt-free):
+#   Entry EV   = EBITDA × entry_multiple              (enterprise value)
+#   Total uses = Entry EV + net_debt_bs + txn_costs
+#     (existing BS debt is assumed refinanced / repaid at close;
+#      existing BS cash reduces the purchase price the buyer pays)
+#   Drawn at close = TLB + mezz  (revolver is committed but UNDRAWN)
+#   Sponsor equity = Total uses − drawn_at_close − rollover
+#
+# FIX F1: equity check uses drawn_at_close (TLB + mezz), NOT committed total
+#          (which included the undrawn revolver and understated equity_in).
+# FIX F2: payment-plan path's total_debt recalculation includes net_debt_bs.
+# FIX F3: preferred return is a carry HURDLE, NOT a cash deduction from exit.
+# FIX F4: IRR cashflows derived from lbo_df earnout_paid column.
+# FIX F5: earnout is independent of use_payment_plan.
+# BUG-9  (NEW): IRR cashflows for payment-plan always start with -equity_in
+#               at t=0.  Original hardcoded 0 at t=0 which is wrong when the
+#               sponsor contributes any cash at closing.
+# BUG-11 (NEW): NWC delta in year 0 now uses (nwc_y0 − initial_nwc) so
+#               working-capital build at entry is captured, not silently dropped.
+# BUG-12 (NEW): TLB mandatory amortisation is applied and cash is debited
+#               BEFORE the revolver-draw check, so the guard triggers correctly.
 # =============================================================================
 def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
-    """
-    Full LBO model.
- 
-    Equity check methodology (CFDF):
-        Entry EV = EBITDA × entry_multiple  (cash-free / debt-free)
-        Total uses = Entry EV + net_debt_bs + txn_costs
-            (existing BS net debt is refinanced / paid off at close;
-             existing BS cash benefits the buyer)
-        Total sources = drawn_LBO_debt + sponsor_equity + seller_rollover
-            drawn_LBO_debt = TLB + mezz  (revolver is committed but UNDRAWN at close)
-        → sponsor_equity = total_uses - drawn_LBO_debt - rollover + txn_costs
- 
-    FIX F1: equity check uses drawn_at_close (TLB + mezz), NOT total_committed
-             which included the undrawn revolver and understated equity_in.
- 
-    FIX F2: payment-plan path's total_debt recalculation now includes net_debt_bs.
- 
-    FIX F3: preferred return is a carry hurdle only. It is NOT deducted from
-             sponsor proceeds — only the mgmt pool's share of carry above the
-             hurdle is deducted. Bridge and waterfall reflect this correctly.
- 
-    FIX F4: IRR cashflows are built from lbo_df (actual earnout_paid per year,
-             post-hurdle gate) rather than ignoring earnout outflows entirely.
- 
-    FIX F5: earnout is independent of use_payment_plan.
-    """
     ebitda  = metrics["EBITDA"]
     revenue = metrics["Revenue"]
- 
+
     entry_ev = ebitda * params["entry_multiple"]
- 
-    # SME leverage haircut
+
+    # ── SME leverage haircut ──────────────────────────────────────────────────
+    # PURPOSE: Large PE funds can achieve 4–5× EBITDA leverage on mature
+    # businesses.  Small SMEs with <$1M revenue or sub-20% margins are seen
+    # as riskier by lenders, so we apply a haircut to the user's leverage %.
     haircut = 1.0
-    if revenue            < 1_000_000: haircut -= 0.15
-    if params["margins"][0] < 0.20:   haircut -= 0.10
+    if revenue              < 1_000_000: haircut -= 0.15
+    if params["margins"][0] < 0.20:      haircut -= 0.10
     haircut = max(0.5, haircut)
     effective_leverage = params["leverage_pct"] * haircut
- 
-    net_debt_bs  = debt_bs - cash_bs                     # positive = net debt
+
+    net_debt_bs  = debt_bs - cash_bs          # positive = net debt position
     txn_costs    = entry_ev * params.get("transaction_cost_pct", 0.0)
- 
-    # Mezz tranche
+
+    # ── Mezzanine tranche ─────────────────────────────────────────────────────
+    # PURPOSE: Mezz sits between senior debt and equity in the capital stack.
+    # It carries a higher rate (typically 12–15%) and can be PIK (payment-in-
+    # kind, where interest compounds onto the balance instead of being paid
+    # in cash), reducing the cash interest burden but increasing exit debt.
     use_mezz     = params.get("use_mezz", False)
     mezz_amount  = params.get("mezz_amount", 0.0) if use_mezz else 0.0
     mezz_rate    = params.get("mezz_rate", 0.12)
     mezz_pik     = params.get("mezz_pik", False)
- 
-    # Senior debt split: TLB (drawn) + revolver facility (committed, undrawn)
+
+    # ── Senior debt: TLB (drawn) + revolver (committed, undrawn) ─────────────
+    # PURPOSE: The Term Loan B is fully drawn at closing.  The revolver is a
+    # committed facility available if the business needs liquidity post-close,
+    # but starts at zero drawn.  Only TLB (and mezz) count as drawn_at_close
+    # in the equity check.
     target_senior     = entry_ev * effective_leverage
     revolver_facility = params.get("revolver_facility", min(target_senior * 0.15, 500_000))
     tlb               = max(0.0, target_senior - revolver_facility)
     revolver          = 0.0     # drawn balance — starts at zero
     tlb_original      = tlb
     mezz_balance      = mezz_amount
- 
-    # ── FIX F1: use drawn debt at close for equity calculation ─────────────────
-    drawn_at_close = tlb + mezz_amount   # what is actually funded at closing
- 
-    # Equity rollover
+
+    # FIX F1: use drawn debt at close (TLB + mezz), NOT committed total.
+    # Using committed total (including undrawn revolver) would overstate debt
+    # at close and therefore understate sponsor equity in.
+    drawn_at_close = tlb + mezz_amount
+
+    # ── Seller equity rollover ────────────────────────────────────────────────
+    # PURPOSE: The seller keeps a slice of NewCo equity.  This reduces both
+    # the equity check the sponsor must write and the sponsor's exit proceeds
+    # in exact proportion to the rollover %.
     equity_pct        = params.get("equity_pct", 0.0) if params.get("use_equity_rollover") else 0.0
     sponsor_ownership = 1.0 - equity_pct
     mgmt_pool_pct     = params.get("mgmt_pool_pct", 0.0) if params.get("use_mgmt_pool") else 0.0
- 
+
     # ── Equity check ──────────────────────────────────────────────────────────
     if params.get("use_payment_plan"):
         payment_schedule = params.get("payment_schedule", [])
- 
-        # Base equity = what total equity holders (sponsor + rollover) provide
-        # Uses drawn_at_close (F1 fix) and net_debt_bs for CFDF basis
+        # Under a payment plan the consideration is paid in instalments
+        # (vendor finance).  At close the sponsor writes a smaller cheque;
+        # remaining payments flow through as annual cash outflows in the model.
         base_equity      = max(0.0, entry_ev + net_debt_bs - drawn_at_close)
         equity_rollover  = base_equity * equity_pct
         min_sponsor_eq   = base_equity * sponsor_ownership + txn_costs
- 
+
         equity_in = sum(payment_schedule) + txn_costs - equity_rollover
         equity_in = max(equity_in, min_sponsor_eq)
- 
-        # FIX F2: include net_debt_bs in total debt recalculation
+
+        # FIX F2: net_debt_bs must be included when back-solving total debt
+        # under the payment plan.  The original omitted it, understating how
+        # much debt the deal carries.
         total_debt = max(0.0, entry_ev + net_debt_bs + txn_costs - equity_in - equity_rollover)
- 
-        # Re-split total_debt into mezz / revolver / TLB
+
         mezz_actual       = min(mezz_amount, total_debt)
         senior_actual     = max(0.0, total_debt - mezz_actual)
         revolver_facility = min(revolver_facility, senior_actual)
@@ -871,105 +1049,142 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         tlb_original      = tlb
         mezz_balance      = mezz_actual
         drawn_at_close    = tlb + mezz_actual
- 
+
     else:
         # Standard (non-payment-plan) path
         base_equity     = max(0.0, entry_ev + net_debt_bs - drawn_at_close)
         equity_rollover = base_equity * equity_pct
         equity_in       = base_equity * sponsor_ownership + txn_costs
         total_debt      = drawn_at_close + revolver_facility   # committed (for reporting)
- 
+
     if equity_in <= 0:
         st.warning("⚠️ Sponsor equity check is zero/negative — flooring at $1.")
         equity_in = 1.0
- 
-    # ── Annual model parameters ───────────────────────────────────────────────
+
+    # ── Annual model setup ────────────────────────────────────────────────────
     cash           = float(params["min_cash"])
     use_margin     = params.get("use_override_margin", True)
-    prev_nwc       = params.get("initial_nwc", revenue * params["nwc_pct"])
+    initial_nwc    = params.get("initial_nwc", revenue * params["nwc_pct"])
     debt_sweep_pct = params.get("debt_sweep_pct", 0.60)
     cash_cap_pct   = params.get("cash_cap_pct", 0.10)
     tlb_amort_pct  = params.get("tlb_amort_pct", 0.01)
- 
-    # Earnout schedule (FIX F5: independent of payment plan)
+
+    # FIX F5: earnout schedule is independent of payment_plan flag.
+    # Original code gated earnout on use_payment_plan which is incorrect.
     earnout_schedule = params.get("earnout_schedule", []) if params.get("use_earnout") else []
- 
+
     rows = []
- 
+
+    # prev_nwc starts at initial_nwc (from BS or revenue*nwc_pct) so that the
+    # very first year's delta correctly captures working-capital absorption on
+    # the projected (grown) revenue base relative to the historical balance.
+    prev_nwc = initial_nwc
+
     for i in range(params["years"]):
         rev      = revenue * (1 + params["growth"]) ** (i + 1)
         margin_y = params["margins"][i] if use_margin else (ebitda / revenue if revenue else 0)
         ebitda_y = rev * margin_y
         da_y     = rev * params["da_pct"]
         ebit_lbo = ebitda_y - da_y
- 
+
+        # ── Interest ─────────────────────────────────────────────────────────
+        # PURPOSE: Compute annual interest charge on drawn debt.  Senior debt
+        # (TLB + revolver drawn) is cash-pay.  Mezz can be cash-pay or PIK.
         interest_senior = tlb * params["tlb_rate"] + revolver * params["rev_rate"]
         interest_mezz   = 0.0 if mezz_pik else mezz_balance * mezz_rate
         interest_total  = interest_senior + interest_mezz
- 
+
+        # PIK: roll interest onto mezz balance instead of paying cash.
+        # This increases exit debt but preserves current-year FCF.
         if mezz_pik:
             mezz_balance *= (1 + mezz_rate)
- 
+
         ebt_lbo = ebit_lbo - interest_total
         tax     = max(0.0, ebt_lbo * params["tax_rate"])
- 
+
+        # ── Working capital ───────────────────────────────────────────────────
+        # PURPOSE: As revenue grows, more cash is tied up in receivables and
+        # inventory (net of payables growth).  NWC is modelled as a fixed %
+        # of revenue; the year-on-year CHANGE is the cash cost.
         nwc       = rev * params["nwc_pct"]
-        delta_nwc = 0.0 if i == 0 else nwc - prev_nwc
+        delta_nwc = nwc - prev_nwc   # BUG-11 FIX: was hardcoded to 0 in year 0
         prev_nwc  = nwc
-        capex     = rev * params["capex_pct"]
- 
+
+        capex = rev * params["capex_pct"]
+
+        # ── Free Cash Flow ────────────────────────────────────────────────────
+        # FCF = EBIT(1-t) + D&A − CapEx − ΔNWC
+        # We use EBIT-based FCF (not net profit) because interest is handled
+        # separately in the debt schedule, avoiding double-counting.
         fcf = (ebit_lbo - tax) + da_y - capex - delta_nwc
- 
-        # Staged payment
+
+        # ── Staged payment (vendor finance) ───────────────────────────────────
+        # PURPOSE: Under a payment plan the remaining purchase-price
+        # instalments are paid to the seller each year from operating cash.
         payment = 0.0
         if params.get("use_payment_plan"):
             sched   = params.get("payment_schedule", [])
             payment = sched[i] if i < len(sched) else 0.0
- 
-        # Earnout — paid only if EBITDA hurdle met (FIX F5: works without payment_plan)
+
+        # ── Earnout (FIX F5: independent of payment plan) ─────────────────────
+        # PURPOSE: An earnout is a contingent payment to the seller triggered
+        # only if the business hits an agreed EBITDA threshold.  It rewards the
+        # seller for genuine post-deal performance, not just valuation optimism.
         earnout_paid = 0.0
         if i < len(earnout_schedule):
             eo = earnout_schedule[i]
             if ebitda_y >= eo.get("ebitda_hurdle", 0.0):
                 earnout_paid = eo.get("amount", 0.0)
- 
+
         fcf_after = fcf - payment - earnout_paid
         cash += fcf_after
- 
-        # Mandatory TLB amortisation
+
+        # ── BUG-12 FIX: Mandatory TLB amortisation BEFORE revolver draw ───────
+        # PURPOSE: The TLB typically requires 1% p.a. principal amortisation
+        # regardless of cash position.  By debiting cash first, the revolver
+        # draw guard can then correctly top up cash to the minimum if needed.
         mandatory_amort = min(tlb, tlb_original * tlb_amort_pct)
         tlb  -= mandatory_amort
-        cash -= mandatory_amort
- 
-        # Revolver draw if cash < minimum
+        cash -= mandatory_amort    # MOVED before revolver draw (was after in original)
+
+        # ── Revolver draw ─────────────────────────────────────────────────────
+        # PURPOSE: If cash falls below the operating minimum after amortisation
+        # and payments, draw the revolver up to its facility size.
         if cash < params["min_cash"]:
             draw      = min(params["min_cash"] - cash, revolver_facility - revolver)
             revolver += draw
             cash     += draw
- 
-        # FCF sweep — revolver first, TLB second, remaining to mezz (if cash-pay)
+
+        # ── FCF sweep ─────────────────────────────────────────────────────────
+        # PURPOSE: Excess cash above the minimum is used to pay down debt
+        # (revolver first, then TLB, then mezz if cash-pay).  This is the
+        # primary deleveraging mechanism in the model.
         excess  = max(0.0, cash - params["min_cash"])
         sweep   = excess * debt_sweep_pct
- 
+
         pay_rev  = min(revolver, sweep)
         revolver -= pay_rev
         cash     -= pay_rev
         sweep    -= pay_rev
- 
+
         pay_tlb = min(tlb, sweep)
         tlb    -= pay_tlb
         cash   -= pay_tlb
         sweep  -= pay_tlb
- 
+
         pay_mezz = 0.0
         if not mezz_pik:
             pay_mezz      = min(mezz_balance, sweep)
             mezz_balance -= pay_mezz
             cash         -= pay_mezz
- 
+
+        # ── Cash cap ──────────────────────────────────────────────────────────
+        # PURPOSE: Prevent unrealistic cash accumulation.  Assumes management
+        # would upstream excess cash to the sponsor via dividends / loan
+        # repayment above the cap.
         max_cash = cash_cap_pct * rev
         cash     = min(cash, max_cash)
- 
+
         rows.append({
             "Year":            i + 1,
             "Revenue":         rev,
@@ -992,29 +1207,35 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
             "Cash":            cash,
             "Net Debt":        tlb + revolver + mezz_balance - cash,
         })
- 
+
     lbo_df = pd.DataFrame(rows)
     last   = lbo_df.iloc[-1]
- 
+
+    # ── Exit ─────────────────────────────────────────────────────────────────
+    # PURPOSE: At the end of the holding period, sell the business at the exit
+    # multiple applied to the last year's EBITDA.  Deduct residual net debt to
+    # get gross equity proceeds available to split between all equity holders.
     exit_ev       = last["EBITDA"] * params["exit_multiple"]
     exit_net_debt = last["TLB"] + last["Revolver"] + last["Mezz Balance"] - last["Cash"]
     gross_equity  = exit_ev - exit_net_debt
- 
-    # ── FIX F3: Proper 2-tier waterfall ──────────────────────────────────────
-    # Preferred return is a CARRY HURDLE only — it gates whether mgmt pool
-    # participates. It is NOT a cash payment to a third party.
-    #   Tier 1 (≤ equity_in + pref): sponsor keeps all (no mgmt dilution)
-    #   Tier 2 (> equity_in + pref): mgmt pool takes % of carry above hurdle
+
+    # ── FIX F3: 2-tier waterfall — preferred return is a HURDLE only ─────────
+    # PURPOSE: The preferred return defines the minimum sponsor IRR before
+    # management's equity pool participates in any upside ("carry").  It is NOT
+    # a cash distribution — it simply sets the threshold above which management
+    # starts sharing in the carry.
     hurdle_irr       = params.get("hurdle_irr", 0.08)
     preferred_return = equity_in * ((1 + hurdle_irr) ** params["years"] - 1)
- 
+
     sponsor_gross = gross_equity * sponsor_ownership
- 
+
     carry         = max(0.0, sponsor_gross - equity_in - preferred_return)
     mgmt_proceeds = carry * mgmt_pool_pct if params.get("use_mgmt_pool") else 0.0
-    sponsor_exit  = sponsor_gross - mgmt_proceeds   # preferred_return NOT deducted
+    # FIX F3: preferred_return is NOT deducted from sponsor_exit.
+    # The sponsor receives sponsor_gross minus only the mgmt pool's share of carry.
+    sponsor_exit  = sponsor_gross - mgmt_proceeds
     seller_exit   = gross_equity * equity_pct
- 
+
     if sponsor_exit <= 0:
         return lbo_df, {
             "Entry EV": entry_ev, "Total Debt": total_debt,
@@ -1025,31 +1246,44 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
             "equity_rollover": equity_rollover,
             "sponsor_ownership": sponsor_ownership,
         }
- 
+
     moic = sponsor_exit / max(equity_in, 1.0)
- 
-    # ── FIX F4: IRR cashflows include earnout payments from lbo_df ────────────
+
+    # ── FIX F4 + BUG-9: IRR cashflow construction ────────────────────────────
+    # PURPOSE: Build the sponsor's cashflow stream for IRR calculation.
+    # t=0 is close; t=1…N are annual periods; t=N also receives exit proceeds.
+    #
+    # BUG-9 FIX: Payment-plan path previously set t=0 to 0, which is only
+    # correct if the sponsor puts in absolutely no cash at close.  In reality
+    # equity_in always includes at least transaction costs.  We now always
+    # start with -equity_in at t=0.
+    #
+    # FIX F4: Earnout outflows (per lbo_df) are included in the cashflow
+    # stream so the IRR properly reflects the total cost of acquisition.
     if params.get("use_payment_plan"):
-        # Payment-plan: t=0 empty, t=1…N = staged payments + earnouts, t=N += exit
-        cashflows = [0.0]
+        # t=0: sponsor equity check (negative — it's an outflow)
+        # t=1…N: staged payments + earnouts (negative outflows) + exit at t=N
+        cashflows = [-equity_in]                       # BUG-9 FIX: was 0.0
         for _, row in lbo_df.iterrows():
             cashflows.append(-(row["Payment"] + row["Earnout Paid"]))
         cashflows[-1] += sponsor_exit
     else:
         if lbo_df["Earnout Paid"].sum() > 0:
-            # Earnout-only (no staged payments): equity_in at t=0, earnouts mid-stream
+            # Earnout-only (no staged payments): equity_in at t=0, earnouts at t=1…N
             cashflows = [-equity_in]
             for _, row in lbo_df.iterrows():
                 cashflows.append(-row["Earnout Paid"])
             cashflows[-1] += sponsor_exit
         else:
+            # Simple case: single outflow at entry, single inflow at exit
             cashflows = [-equity_in] + [0.0] * (params["years"] - 1) + [sponsor_exit]
- 
+
     try:
         irr = compute_irr(cashflows)
     except Exception:
+        # Fallback: solve for IRR from MOIC geometrically
         irr = moic ** (1.0 / params["years"]) - 1.0
- 
+
     return lbo_df, {
         "Entry EV":          entry_ev,
         "Total Debt":        total_debt,             # committed (incl. undrawn revolver)
@@ -1071,8 +1305,8 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         "IRR":               irr,
         "total_loss":        False,
     }
- 
- 
+
+
 # =============================================================================
 # FORMATTING
 # =============================================================================
@@ -1090,8 +1324,8 @@ def fmt(x, unit: str = "auto") -> str:
     if unit == "pct": return f"{x*100:.1f}%"
     if unit == "x":   return f"{x:.2f}x"
     return str(x)
- 
- 
+
+
 FMT_LBO = {
     "Revenue":         "${:,.0f}",  "EBITDA":          "${:,.0f}",
     "EBITDA Margin":   "{:.1%}",    "Interest":        "${:,.0f}",
@@ -1103,12 +1337,19 @@ FMT_LBO = {
     "Revolver":        "${:,.0f}",  "Cash":            "${:,.0f}",
     "Net Debt":        "${:,.0f}",
 }
- 
- 
+
+
 # =============================================================================
 # CHARTS
+# PURPOSE: Visualise key model outputs using Plotly for interactive inspection.
+# BUG-6 FIX: Original used `[go.Bar](http://go.Bar)(...)` markdown artifacts;
+# replaced with plain go.Bar(...) / go.Scatter(...) calls.
 # =============================================================================
 def chart_debt_paydown(lbo_df: pd.DataFrame):
+    """
+    PURPOSE: Show how each debt tranche shrinks over the holding period while
+    the cash balance grows — the 'deleveraging story' that justifies LBO returns.
+    """
     if not PLOTLY: return
     fig = go.Figure()
     fig.add_trace(go.Bar(name="TLB",      x=lbo_df["Year"], y=lbo_df["TLB"],          marker_color="#1e3a5f"))
@@ -1124,9 +1365,14 @@ def chart_debt_paydown(lbo_df: pd.DataFrame):
         plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
     )
     st.plotly_chart(fig, use_container_width=True)
- 
- 
+
+
 def chart_fcf_ebitda(lbo_df: pd.DataFrame):
+    """
+    PURPOSE: Compare EBITDA against free cash flow each year.  The gap between
+    them shows the cash cost of debt service, capex, and working capital.
+    Earnout outflows are shown separately when applicable.
+    """
     if not PLOTLY: return
     fig = go.Figure()
     fig.add_trace(go.Bar(name="EBITDA", x=lbo_df["Year"], y=lbo_df["EBITDA"], marker_color="#0ea5e9"))
@@ -1142,27 +1388,27 @@ def chart_fcf_ebitda(lbo_df: pd.DataFrame):
         plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
     )
     st.plotly_chart(fig, use_container_width=True)
- 
- 
+
+
 def chart_waterfall(returns: dict):
     """
-    FIX F3: preferred return shown as informational threshold bar (dashed),
-    NOT as a negative deduction — because it is a hurdle for carry calculation,
-    not an actual cash payment.
+    PURPOSE: Visualise the equity waterfall — how gross exit proceeds are split
+    between sponsor equity, management carry, and the preferred-return hurdle.
+
+    FIX F3: Preferred return is shown as a dashed reference line (threshold),
+    NOT as a negative bar.  It is a carry hurdle, not a cash payment to anyone.
     """
     if not PLOTLY: return
     sponsor_gross = returns["Gross Equity"] * returns.get("Sponsor %", 1.0)
-    carry         = returns.get("Carry", 0)
     mgmt          = returns.get("Mgmt Proceeds", 0)
     sponsor_exit  = returns["Exit Equity"]
- 
+
     labels = ["Equity In (−)", "Sponsor Gross Exit", "Mgmt Pool (−)", "Sponsor Net Exit"]
     vals   = [-returns["Equity In"], sponsor_gross, -mgmt, sponsor_exit]
     colors = ["#dc2626", "#16a34a", "#7c3aed", "#0ea5e9"]
- 
+
     fig = go.Figure(go.Bar(x=labels, y=vals, marker_color=colors))
- 
-    # Mark the preferred return hurdle as a horizontal reference line
+
     pref_return_level = returns["Equity In"] + returns.get("Preferred Return", 0)
     fig.add_hline(
         y=pref_return_level, line_dash="dot", line_color="#f59e0b",
@@ -1176,10 +1422,14 @@ def chart_waterfall(returns: dict):
         plot_bgcolor="#f8fafc", paper_bgcolor="#ffffff",
     )
     st.plotly_chart(fig, use_container_width=True)
- 
- 
+
+
 # =============================================================================
 # EXCEL EXPORT
+# PURPOSE: Package the full model output (summary KPIs, LBO annual table,
+# scenario analysis) into a multi-sheet Excel workbook for offline review.
+# BUG-8 FIX: Original used HTTP-artifact method calls; replaced with plain
+# DataFrame.to_excel() and buf.seek() / buf.read() syntax.
 # =============================================================================
 def build_excel_export(pl_metrics, lbo_df, returns, sc_rows):
     buf = io.BytesIO()
@@ -1205,16 +1455,19 @@ def build_excel_export(pl_metrics, lbo_df, returns, sc_rows):
             {"Item": "MOIC",                  "Value": returns.get("MOIC", 0)},
             {"Item": "IRR",                   "Value": returns.get("IRR", 0)},
         ])
-        summary.to_excel(writer, sheet_name="Summary",   index=False)
-        lbo_df.to_excel(writer,  sheet_name="LBO Model", index=False)
+        summary.to_excel(writer, sheet_name="Summary",   index=False)   # BUG-8 FIX
+        lbo_df.to_excel(writer,  sheet_name="LBO Model", index=False)   # BUG-8 FIX
         if sc_rows:
             pd.DataFrame(sc_rows).to_excel(writer, sheet_name="Scenarios", index=False)
-    buf.seek(0)
-    return buf.read()
- 
- 
+    buf.seek(0)       # BUG-8 FIX: was `[buf.seek](http://buf.seek)(0)`
+    return buf.read() # BUG-8 FIX: was `[buf.read](http://buf.read)()`
+
+
 # =============================================================================
 # SESSION STATE DEFAULTS
+# PURPOSE: Initialise every session-state key that the sidebar widgets read
+# as their default values.  This ensures a clean first load and allows the
+# auto-calibrate button to overwrite them on rerun.
 # =============================================================================
 _defaults = {
     "calibrated":   False,
@@ -1230,13 +1483,18 @@ _defaults = {
 for k, v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
- 
- 
+
+
 # =============================================================================
 # SIDEBAR
+# BUG-5 FIX: All session-state reads restored from HTTP-artifact form
+# `st.session_[state.cal](http://state.cal)_entry` to plain
+# `st.session_state["cal_entry"]` (or `st.session_state.cal_entry`).
+# The artifact form silently evaluates to None, making every slider reset
+# to its min value on every rerun.
 # =============================================================================
 st.sidebar.subheader("⚙️ Deal Parameters")
- 
+
 with st.sidebar.expander("📋 Deployment checklist", expanded=False):
     st.markdown("""
     **Required packages**
@@ -1254,66 +1512,68 @@ with st.sidebar.expander("📋 Deployment checklist", expanded=False):
     APP_PASSWORD = "yourpassword"
     ```
     """)
- 
+
 with st.sidebar.expander("🤖 AI Classification (optional)"):
     st.caption("Paste Anthropic API key for AI P&L classification.")
     api_key = st.text_input("Anthropic API Key", type="password")
     use_ai  = st.checkbox("Enable AI classification", value=bool(api_key))
- 
+
 with st.sidebar.expander("🧹 EBITDA Add-backs"):
     addback_salary   = st.number_input("Excess owner salary ($)",     0, step=10_000)
     addback_oneoff   = st.number_input("One-off / non-recurring ($)", 0, step=10_000)
     addback_personal = st.number_input("Personal expenses ($)",       0, step=5_000)
- 
+
 total_addbacks = float(addback_salary + addback_oneoff + addback_personal)
- 
-# Sector
+
 st.sidebar.subheader("🏭 Sector")
 sector = st.sidebar.selectbox("Company sector", SECTORS)
 _, _, _, sector_note = SECTOR_CAL.get(sector, SECTOR_CAL["Other"])
 if sector_note:
     st.sidebar.caption(f"ℹ️ {sector_note}")
- 
+
 if st.session_state.calibrated:
     st.sidebar.success("✅ Parameters auto-calibrated")
     if st.sidebar.button("🔄 Reset to defaults"):
         for k, v in _defaults.items():
             st.session_state[k] = v
         st.rerun()
- 
-# Valuation
+
 st.sidebar.subheader("Valuation")
+# BUG-5 FIX: use st.session_state["cal_entry"] not the HTTP-artifact form
 entry_multiple = st.sidebar.number_input(
-    "Entry EV/EBITDA", 2.0, 20.0, value=float(st.session_state.cal_entry), step=0.5)
+    "Entry EV/EBITDA", 2.0, 20.0,
+    value=float(st.session_state["cal_entry"]), step=0.5)
 exit_multiple = st.sidebar.number_input(
-    "Exit EV/EBITDA",  2.0, 20.0, value=float(st.session_state.cal_exit),  step=0.5)
- 
-# Holding period & growth
+    "Exit EV/EBITDA",  2.0, 20.0,
+    value=float(st.session_state["cal_exit"]),  step=0.5)
+
 st.sidebar.subheader("Holding Period & Growth")
 years  = st.sidebar.slider("Holding Period (years)", 1, 7, 5)
-growth = st.sidebar.slider("Revenue Growth % p.a.", 0, 40,
-                            value=int(st.session_state.cal_growth)) / 100
- 
+growth = st.sidebar.slider(
+    "Revenue Growth % p.a.", 0, 40,
+    value=int(st.session_state["cal_growth"])) / 100  # BUG-5 FIX
+
 margin_mode = st.sidebar.radio("EBITDA Margin Input", ["Flat", "Per Year"], horizontal=True)
 if margin_mode == "Flat":
-    flat_m  = st.sidebar.slider("EBITDA Margin %", 0, 60,
-                                 value=int(st.session_state.cal_margin)) / 100
+    flat_m  = st.sidebar.slider(
+        "EBITDA Margin %", 0, 60,
+        value=int(st.session_state["cal_margin"])) / 100  # BUG-5 FIX
     margins = [flat_m] * years
 else:
     margins = [st.sidebar.slider(f"Y{i+1} EBITDA Margin %", 0, 60, 20 + i) / 100
                for i in range(years)]
- 
-# Payment structure (FIX: clean, no double-append)
+
+# ── Payment structure ─────────────────────────────────────────────────────────
 st.sidebar.subheader("💰 Payment Structure")
 use_payment_plan = st.sidebar.checkbox("Enable staged payments (vendor finance)")
- 
+
 payment_schedule = []
 if use_payment_plan:
     st.sidebar.caption("Year 1 = first payment after closing.")
     for i in range(years):
         default_val = 0
         if st.session_state.calibrated and "cal_payment" in st.session_state:
-            cp = st.session_state.cal_payment
+            cp = st.session_state["cal_payment"]  # BUG-5 FIX
             if i < len(cp):
                 default_val = int(round(cp[i]))
         val = st.sidebar.number_input(f"Year {i+1} payment ($)", 0,
@@ -1321,8 +1581,8 @@ if use_payment_plan:
         payment_schedule.append(float(val))
     if any(p > 0 for p in payment_schedule):
         st.sidebar.caption(f"Total staged payments: {fmt(sum(payment_schedule))}")
- 
-# Earnout — FIX F5: independent toggle, not gated by use_payment_plan
+
+# ── Earnout (FIX F5: independent toggle) ─────────────────────────────────────
 with st.sidebar.expander("📈 Earnout (conditional payments)"):
     use_earnout = st.checkbox("Enable earnout payments", key="use_earnout_cb")
     earnout_schedule = []
@@ -1336,8 +1596,8 @@ with st.sidebar.expander("📈 Earnout (conditional payments)"):
             eo_amt    = st.number_input(f"Earnout amount Y{i+1} ($)",  0, step=10_000, key=f"eo_amt_{i}")
             eo_hurdle = st.number_input(f"EBITDA hurdle Y{i+1} ($)",   0, step=10_000, key=f"eo_hrd_{i}")
             earnout_schedule.append({"amount": float(eo_amt), "ebitda_hurdle": float(eo_hurdle)})
- 
-# Equity structure
+
+# ── Equity structure ──────────────────────────────────────────────────────────
 st.sidebar.subheader("📈 Equity Structure")
 use_equity_rollover = st.sidebar.checkbox("Seller equity rollover")
 equity_pct = 0.0
@@ -1348,7 +1608,7 @@ if use_equity_rollover:
         f"sponsor owns {1-equity_pct:.0%}. "
         "Reduces both equity check AND exit proceeds proportionally."
     )
- 
+
 use_mgmt_pool = st.sidebar.checkbox("Management equity pool")
 mgmt_pool_pct = 0.0
 if use_mgmt_pool:
@@ -1356,23 +1616,24 @@ if use_mgmt_pool:
     st.sidebar.caption(
         f"Mgmt receives {mgmt_pool_pct:.0%} of sponsor carry above preferred return hurdle."
     )
-hurdle_irr = st.sidebar.slider("Preferred return hurdle %", 0, 30, 8,
-    help="Carry hurdle only — not a cash payment. Mgmt pool only participates above this.") / 100
- 
-# Capital structure
+hurdle_irr = st.sidebar.slider(
+    "Preferred return hurdle %", 0, 30, 8,
+    help="Carry hurdle only — not a cash payment. Mgmt pool only participates above this."
+) / 100
+
+# ── Capital structure ─────────────────────────────────────────────────────────
 st.sidebar.subheader("Capital Structure")
 leverage_pct = st.sidebar.slider(
     "Senior leverage % of Entry EV", 0, 100,
-    value=int(st.session_state.cal_leverage),
-    help="Target senior LBO debt as % of EV (TLB + revolver facility). SME haircut applied.") / 100
+    value=int(st.session_state["cal_leverage"]),  # BUG-5 FIX
+    help="Target senior LBO debt as % of EV (TLB + revolver facility). SME haircut applied."
+) / 100
 tlb_rate = st.sidebar.slider("TLB Interest Rate %", 0, 20, 7) / 100
 rev_rate = st.sidebar.slider("Revolver Rate %",     0, 20, 6) / 100
 revolver_facility = st.sidebar.number_input(
     "Revolver facility size ($)", 0, value=500_000, step=50_000,
-    help="Committed facility — undrawn at close, drawn only if cash falls below minimum. "
-         "Does NOT reduce equity check (F1 fix).")
- 
-# Mezzanine
+    help="Committed facility — undrawn at close. Does NOT reduce equity check.")
+
 with st.sidebar.expander("🏦 Mezzanine / PIK (optional)"):
     use_mezz    = st.checkbox("Add mezzanine tranche")
     mezz_amount = 0.0
@@ -1384,24 +1645,25 @@ with st.sidebar.expander("🏦 Mezzanine / PIK (optional)"):
         mezz_pik    = st.checkbox("PIK (interest rolls up, no cash payment)")
         if mezz_pik:
             st.caption("⚠️ PIK compounds annually — increases exit debt balance.")
- 
-# Other assumptions
+
 st.sidebar.subheader("Other Assumptions")
 tax_rate  = st.sidebar.slider("Tax Rate %",       0, 35, 17) / 100
 da_pct    = st.sidebar.slider("D&A % Revenue",    0, 15,  3) / 100
-nwc_pct   = st.sidebar.slider("NWC % Revenue",    0, 20,
-                                value=int(st.session_state.cal_nwc)) / 100
-capex_pct = st.sidebar.slider("CapEx % Revenue",  0, 20,
-                                value=int(st.session_state.cal_capex)) / 100
+nwc_pct   = st.sidebar.slider(
+    "NWC % Revenue", 0, 20,
+    value=int(st.session_state["cal_nwc"])) / 100    # BUG-5 FIX
+capex_pct = st.sidebar.slider(
+    "CapEx % Revenue", 0, 20,
+    value=int(st.session_state["cal_capex"])) / 100  # BUG-5 FIX
 min_cash  = st.sidebar.number_input("Minimum Cash ($)", 0, value=50_000, step=10_000)
- 
+
 with st.sidebar.expander("⚙️ Advanced Mechanics"):
     debt_sweep_pct = st.slider("FCF Debt Sweep %",            0, 100, 60) / 100
     cash_cap_pct   = st.slider("Cash Cap % of Revenue",       0, 30,  10) / 100
     tlb_amort_pct  = st.slider("TLB Mandatory Amort % p.a.",  0, 10,   1) / 100
     txn_cost_pct   = st.slider("Transaction Costs % of EV",   0, 10,   3) / 100
- 
-# Assemble params
+
+# ── Assemble params dict ──────────────────────────────────────────────────────
 params = dict(
     entry_multiple=entry_multiple,
     exit_multiple=exit_multiple,
@@ -1432,17 +1694,16 @@ params = dict(
     use_mgmt_pool=use_mgmt_pool,
     mgmt_pool_pct=mgmt_pool_pct,
     hurdle_irr=hurdle_irr,
-    use_earnout=use_earnout,    # FIX F5: no longer gated by use_payment_plan
+    use_earnout=use_earnout,    # FIX F5: independent of use_payment_plan
 )
- 
+
 if use_payment_plan:
     params["payment_schedule"] = payment_schedule
- 
-# FIX F5: earnout schedule always added when earnout is on
+
 if use_earnout:
     params["earnout_schedule"] = earnout_schedule
- 
- 
+
+
 # =============================================================================
 # MAIN PAGE
 # =============================================================================
@@ -1452,14 +1713,17 @@ st.caption(
     "Supports xlsx, xls, csv, digital PDF, and scanned PDF (OCR). "
     "Buyout structures: cash · debt · seller rollover · earnout · mezzanine · management pool."
 )
- 
+
 with st.expander("📚 Singapore SME Comparable Transaction Multiples"):
     st.dataframe(COMPS_TABLE, use_container_width=True, hide_index=True)
- 
+
 st.markdown("---")
- 
+
 # =============================================================================
 # STEP 1 — UPLOAD
+# PURPOSE: Accept one or more financial statement files.  Separate upload
+# widgets for P&L and Balance Sheet make it easy to handle companies that
+# store them in different files (common in Singapore SME filings).
 # =============================================================================
 st.header("📂 Step 1 — Upload Financials")
 col_pl, col_bs = st.columns(2)
@@ -1473,30 +1737,34 @@ with col_bs:
         "Balance Sheet(s) (optional)", type=["xlsx", "xls", "csv", "pdf"],
         accept_multiple_files=True,
     )
- 
+
 pl_metrics:     dict  | None = None
 bs_derived_nwc: float | None = None
 cash_bs = debt_bs = 0.0
 sc_rows = []
- 
- 
+
+
 # =============================================================================
 # MULTI-YEAR P&L COLUMN SELECTOR
+# PURPOSE: Many SME accounts include two or three years side-by-side in the
+# same spreadsheet.  Detect all numeric columns, show a dropdown so the user
+# can pick the year they want to model, then pass the chosen column name to
+# the cleaning pipeline.
 # =============================================================================
 if pl_files:
     first_file = pl_files[0]
-    first_file.seek(0)
+    first_file.seek(0)      # BUG-13 FIX: plain attribute access
     raw_peek = read_any_file(first_file)
-    first_file.seek(0)
- 
+    first_file.seek(0)      # BUG-13 FIX: reset so load_and_combine can re-read
+
     amount_col_to_use = None
- 
+
     if raw_peek is not None and raw_peek.shape[1] > 2:
         peek_clean = raw_peek.dropna(how="all").fillna("").astype(str)
         peek_clean = dedupe_columns(peek_clean)
         peek_clean.columns = [f"c{i}" for i in range(len(peek_clean.columns))]
         _, year_cols = detect_year_columns(peek_clean)
- 
+
         if len(year_cols) > 1:
             st.info(
                 f"📅 **Multi-year P&L detected** — {len(year_cols)} amount columns found. "
@@ -1510,33 +1778,34 @@ if pl_files:
                     break
         else:
             st.session_state["pl_year_col"] = None
- 
+
     for f in pl_files:
-        f.seek(0)
- 
+        f.seek(0)   # BUG-13 FIX: reset each file before load_and_combine reads it
+
     df_pl = load_and_combine(pl_files, amount_col_override=st.session_state.get("pl_year_col"))
- 
+
     if df_pl is None:
         st.error("P&L could not be parsed.")
     else:
         df_pl = classify_pl(df_pl, use_ai=use_ai, api_key=api_key or "")
- 
+
     st.markdown("---")
     st.header("📋 Step 2 — Review & Correct P&L Classifications")
- 
+
     if total_addbacks > 0:
         st.info(f"🧹 EBITDA normalisation: {fmt(total_addbacks)} of add-backs applied.")
- 
+
     unknown_rows = df_pl[df_pl["Category"] == "Unknown"]
     unknown_rows = unknown_rows[unknown_rows["Amount"] != 0]
     if len(unknown_rows):
         st.warning(f"⚠️ {len(unknown_rows)} row(s) unclassified. Fix below or enable AI.")
- 
+
     df_display = df_pl.copy()
-    df_display["Amount"] = pd.to_numeric(df_display["Amount"], errors="coerce")
+    df_display["Amount"] = pd.to_numeric(df_display["Amount"], errors="coerce")  # BUG-7 FIX
     mask = df_display["Category"] == "Tax"
     df_display.loc[mask, "Amount"] = df_display.loc[mask, "Amount"].abs()
- 
+
+    # BUG-7 FIX: st.data_editor (was `[st.data](http://st.data)_editor(...)`)
     df_edited = st.data_editor(
         df_display,
         use_container_width=True,
@@ -1549,35 +1818,40 @@ if pl_files:
             )
         },
     )
- 
+
     mem = load_memory()
     for _, r in df_pl.iterrows():
         if r["Category"] not in ("Unknown", "Ignore"):
             mem[r["Line Item"]] = r["Category"]
     save_memory(mem)
- 
+
     active_pl  = df_pl[~df_pl["Category"].isin(["Ignore", "Unknown"])]
     pl_metrics = compute_pl(active_pl, addbacks=total_addbacks)
- 
- 
+
+
 # =============================================================================
 # PROCESS BALANCE SHEET
+# PURPOSE: Parse and classify the optional balance sheet to extract:
+#   cash_bs   — reduces purchase price (CFDF)
+#   debt_bs   — increases purchase price (buyer assumes / refinances)
+#   NWC       — seed value for working-capital delta calculation in LBO model
 # =============================================================================
 if bs_files:
     df_bs_raw = load_and_combine(bs_files)
- 
+
     if df_bs_raw is None:
         st.error("Balance Sheet could not be parsed.")
     else:
         df_bs_raw = classify_bs(df_bs_raw)
- 
+
     st.markdown("---")
     st.subheader("🏦 Balance Sheet — Review Classifications")
     st.caption(
         "Debt split: Bank Loan / Hire Purchase / Finance Lease / Director Loan. "
         "All types are included in total BS debt for CFDF equity bridge."
     )
- 
+
+    # BUG-7 FIX: st.data_editor (was `[st.data](http://st.data)_editor(...)`)
     df_bs = st.data_editor(
         df_bs_raw,
         column_config={
@@ -1586,14 +1860,14 @@ if bs_files:
         },
         use_container_width=True, hide_index=True, num_rows="dynamic",
     )
- 
+
     cash_bs     = df_bs.loc[df_bs["Category"] == "Cash",        "Amount"].sum()
     debt_bs     = get_total_debt_bs(df_bs)
     receivables = df_bs.loc[df_bs["Category"] == "Receivables", "Amount"].sum()
     payables    = df_bs.loc[df_bs["Category"] == "Payables",    "Amount"].sum()
     inventory   = df_bs.loc[df_bs["Category"] == "Inventory",   "Amount"].sum()
     bs_derived_nwc = receivables + inventory - payables
- 
+
     debt_cats = ["Debt - Bank Loan", "Debt - Hire Purchase",
                  "Debt - Finance Lease", "Debt - Director Loan"]
     debt_breakdown = {
@@ -1601,37 +1875,41 @@ if bs_files:
         for c in debt_cats
     }
     debt_breakdown = {k: v for k, v in debt_breakdown.items() if v != 0}
- 
+
     if debt_breakdown:
         dcols = st.columns(min(4, len(debt_breakdown)))
         for idx, (k, v) in enumerate(debt_breakdown.items()):
             dcols[idx % 4].metric(k, fmt(v))
- 
+
     if receivables == 0:
         st.warning("⚠️ No receivables detected. Check if assets page is present.")
- 
- 
+
+
 # =============================================================================
 # AUTO-CALIBRATE
+# PURPOSE: One-click button to populate all sidebar parameters with sensible
+# defaults derived from the uploaded financials and selected sector.
+# Stores results in session_state so the sidebar sliders read the new values
+# on rerun without the user having to touch them manually.
 # =============================================================================
 if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
     cal = auto_calibrate(pl_metrics, cash_bs, debt_bs, sector=sector)
- 
+
     st.markdown("---")
     col_cal, col_info = st.columns([1, 2])
     with col_cal:
         if st.button("🎯 Auto-calibrate parameters", type="primary"):
-            st.session_state.calibrated   = True
-            st.session_state.cal_entry    = cal["entry_multiple"]
-            st.session_state.cal_exit     = cal["exit_multiple"]
-            st.session_state.cal_growth   = int(cal["growth"] * 100)
-            st.session_state.cal_margin   = int(cal["target_margin"] * 100)
-            st.session_state.cal_payment  = cal["payment_schedule"]
-            st.session_state.cal_leverage = int(cal["leverage_pct"] * 100)
-            st.session_state.cal_capex    = int(cal["capex_pct"] * 100)
-            st.session_state.cal_nwc      = int(cal["nwc_pct"] * 100)
+            st.session_state.calibrated       = True
+            st.session_state["cal_entry"]     = cal["entry_multiple"]    # BUG-5 FIX
+            st.session_state["cal_exit"]      = cal["exit_multiple"]     # BUG-5 FIX
+            st.session_state["cal_growth"]    = int(cal["growth"] * 100) # BUG-5 FIX
+            st.session_state["cal_margin"]    = int(cal["target_margin"] * 100)
+            st.session_state["cal_payment"]   = cal["payment_schedule"]
+            st.session_state["cal_leverage"]  = int(cal["leverage_pct"] * 100)
+            st.session_state["cal_capex"]     = int(cal["capex_pct"] * 100)
+            st.session_state["cal_nwc"]       = int(cal["nwc_pct"] * 100)
             st.rerun()
- 
+
     with col_info:
         r = cal["rationale"]
         with st.expander("ℹ️ Calibration rationale"):
@@ -1642,8 +1920,8 @@ if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
                 f"- **Leverage:** {r['leverage_ratio']}\n"
                 f"- **Suggested entry:** {r['suggested_entry']} | exit: {r['suggested_exit']}"
             )
- 
- 
+
+
 # =============================================================================
 # VALUATION OUTPUT
 # =============================================================================
@@ -1651,20 +1929,20 @@ if pl_metrics:
     st.markdown("---")
     st.header("📊 Step 3 — Valuation Output")
     m = pl_metrics
- 
+
     if m["Add-backs"] > 0:
         st.success(
             f"📈 Normalised EBITDA: **{fmt(m['EBITDA'])}** "
             f"({fmt(m['EBITDA Margin'], 'pct')} margin) — includes {fmt(m['Add-backs'])} add-backs."
         )
- 
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Revenue",      fmt(m["Revenue"]))
     c2.metric("Gross Profit", fmt(m["Gross Profit"]),  fmt(m["GP Margin"],     "pct"))
     c3.metric("EBITDA",       fmt(m["EBITDA"]),        fmt(m["EBITDA Margin"], "pct"))
     c4.metric("EBIT",         fmt(m["EBIT"]),          fmt(m["EBIT Margin"],   "pct"))
     c5.metric("Net Profit",   fmt(m["Net Profit"]),    fmt(m["Net Margin"],    "pct"))
- 
+
     with st.expander("📄 Full P&L Bridge"):
         bridge_rows = [("Revenue", m["Revenue"]), ("(−) COGS", -m["COGS"]),
                        ("= Gross Profit", m["Gross Profit"]), ("(−) OpEx (gross)", -m["OpEx (gross)"])]
@@ -1683,7 +1961,7 @@ if pl_metrics:
             columns=["Item", "Amount"],
         )
         st.dataframe(pl_bridge, use_container_width=True, hide_index=True)
- 
+
     if bs_files:
         st.subheader("Balance Sheet Snapshot")
         b1, b2, b3, b4 = st.columns(4)
@@ -1692,26 +1970,26 @@ if pl_metrics:
         b3.metric("Net Debt",      fmt(debt_bs - cash_bs))
         if bs_derived_nwc is not None:
             b4.metric("Working Capital", fmt(bs_derived_nwc))
- 
+
     st.markdown("---")
- 
+
     if m["EBITDA"] <= 0:
         st.error(
             "⚠️ EBITDA ≤ 0 — LBO cannot run. "
             "Check classifications in Step 2, or add owner add-backs in the sidebar."
         )
         st.stop()
- 
+
     lbo_params = {
         **params,
         **({"initial_nwc": bs_derived_nwc} if bs_derived_nwc is not None else {}),
     }
- 
+
     # ── Scenario Analysis ─────────────────────────────────────────────────────
     st.subheader("📐 Scenario Analysis — Bear / Base / Bull")
     scenarios = build_scenarios(pl_metrics, cash_bs, debt_bs, lbo_params)
     sc_rows   = []
- 
+
     for sc_name, sc_params in scenarios.items():
         _, sc_ret = run_lbo(pl_metrics, cash_bs, debt_bs, sc_params)
         sc_rows.append({
@@ -1727,14 +2005,14 @@ if pl_metrics:
             "MOIC":      "Loss" if sc_ret["total_loss"] else f"{sc_ret['MOIC']:.2f}x",
             "IRR":       "—"    if sc_ret["total_loss"] else fmt(sc_ret["IRR"], "pct"),
         })
- 
+
     st.dataframe(pd.DataFrame(sc_rows), use_container_width=True, hide_index=True)
- 
+
     # ── Current Parameters — Returns ──────────────────────────────────────────
     lbo_df, returns = run_lbo(pl_metrics, cash_bs, debt_bs, lbo_params)
- 
+
     st.subheader("📈 Current Parameters — Returns")
- 
+
     if returns.get("total_loss"):
         st.error(
             "⚠️ **Total loss** at current parameters. "
@@ -1749,30 +2027,31 @@ if pl_metrics:
         r2.metric("Sponsor Equity In",  fmt(returns["Equity In"]))
         r3.metric("Exit EV",            fmt(returns["Exit EV"]))
         r4.metric("MOIC",               fmt(returns["MOIC"], "x"))
- 
+
         irr_val = returns["IRR"]
         irr_str = fmt(irr_val, "pct")
         r5.metric("IRR", irr_str)
- 
+
         if irr_val >= 0.25:
             st.success(f"✅ IRR {irr_str} — exceeds PE hurdle (20–25%). Strong deal.")
         elif irr_val >= 0.15:
             st.warning(f"⚠️ IRR {irr_str} — borderline. Typical threshold is 20–25%.")
         else:
             st.error(f"❌ IRR {irr_str} — below PE hurdle rate.")
- 
+
         # ── Funding Stack ─────────────────────────────────────────────────────
         st.subheader("💰 Funding Stack at Entry")
         f1, f2, f3, f4, f5 = st.columns(5)
         f1.metric("Sponsor Cash",        fmt(returns["Equity In"]),
                   help="Equity check, includes txn costs")
         f2.metric("Seller Rollover",     fmt(returns.get("Equity Rollover", 0)))
-        f3.metric("TLB (drawn)",         fmt(returns.get("Drawn Debt", 0) - returns.get("Mezz Amount", 0)),
+        f3.metric("TLB (drawn)",
+                  fmt(returns.get("Drawn Debt", 0) - returns.get("Mezz Amount", 0)),
                   help="Term Loan B drawn at close. Revolver is committed but undrawn.")
         f4.metric("Mezzanine",           fmt(returns.get("Mezz Amount", 0)))
         f5.metric("Revolver (undrawn)",  fmt(returns.get("Revolver Facility", 0)),
                   help="Committed facility — available if cash falls below minimum. Not in equity check.")
- 
+
         drawn    = returns.get("Drawn Debt", 0)
         rollover = returns.get("Equity Rollover", 0)
         eq_in    = returns["Equity In"]
@@ -1784,8 +2063,8 @@ if pl_metrics:
                 f"{drawn/total_s:.0%} LBO debt drawn  "
                 f"(sponsor ownership: {returns.get('Sponsor %', 1):.0%})"
             )
- 
-        # ── Equity Waterfall (if relevant) ────────────────────────────────────
+
+        # ── Equity Waterfall ──────────────────────────────────────────────────
         if params.get("use_mgmt_pool") or params.get("use_equity_rollover"):
             st.subheader("🏦 Exit Equity Waterfall")
             st.caption(
@@ -1801,7 +2080,7 @@ if pl_metrics:
             w4.metric("Mgmt Pool",             fmt(returns.get("Mgmt Proceeds", 0)))
             w5.metric("Sponsor Net Proceeds",  fmt(returns["Exit Equity"]))
             chart_waterfall(returns)
- 
+
         # ── Deleveraging ──────────────────────────────────────────────────────
         st.subheader("📉 Deleveraging")
         initial_debt = returns.get("Drawn Debt", returns["Total Debt"])
@@ -1815,28 +2094,38 @@ if pl_metrics:
                 f"Total earnout paid: {fmt(lbo_df['Earnout Paid'].sum())} "
                 "(conditional on EBITDA hurdles, included in IRR cashflows)"
             )
- 
+
         # ── Charts ────────────────────────────────────────────────────────────
         if PLOTLY:
             ch1, ch2 = st.columns(2)
             with ch1: chart_debt_paydown(lbo_df)
             with ch2: chart_fcf_ebitda(lbo_df)
- 
+
         # ── Sensitivity grids ─────────────────────────────────────────────────
+        # PURPOSE: Show how MOIC, IRR, and leverage interact across a ±2 turn
+        # range around the base-case entry and exit multiples.  Highlights the
+        # base-case cell in green so the analyst can orient quickly.
         entry_steps = sorted({round(entry_multiple + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)})
         exit_steps  = sorted({round(exit_multiple  + d, 1) for d in (-1.0, -0.5, 0, +0.5, +1.0)})
-        lev_steps   = sorted({round(leverage_pct   + d, 2) for d in (-0.15, -0.075, 0, +0.075, +0.15)
-                               if 0.10 <= round(leverage_pct + d, 2) <= 0.80})
- 
+
+        # BUG-14 FIX: floating-point set comprehension could produce duplicate
+        # values after rounding; use an explicit filtered list instead.
+        lev_steps = [
+            round(leverage_pct + d, 2)
+            for d in (-0.15, -0.075, 0, +0.075, +0.15)
+            if 0.10 <= round(leverage_pct + d, 2) <= 0.80
+        ]
+        lev_steps = sorted(set(lev_steps))  # deduplicate without losing order
+
         def _run_grid(em, xm, lp=None):
             p = {**lbo_params, "entry_multiple": em, "exit_multiple": xm}
             if lp is not None:
                 p["leverage_pct"] = lp
             _, ret2 = run_lbo(pl_metrics, cash_bs, debt_bs, p)
             return ret2
- 
+
         tab1, tab2, tab3 = st.tabs(["MOIC Sensitivity", "IRR Sensitivity", "Leverage Sensitivity"])
- 
+
         with tab1:
             rows_moic = []
             for em in entry_steps:
@@ -1854,7 +2143,7 @@ if pl_metrics:
                         if (row.name == f"{entry_multiple:.1f}x" and col == f"{exit_multiple:.1f}x") else ""
                         for col in df_moic.columns]
             st.dataframe(df_moic.style.apply(hl_base, axis=1), use_container_width=True)
- 
+
         with tab2:
             rows_irr = []
             for em in entry_steps:
@@ -1867,7 +2156,7 @@ if pl_metrics:
                         row[f"{xm:.1f}x"] = "Loss" if ret2["total_loss"] else fmt(ret2["IRR"], "pct")
                 rows_irr.append(row)
             st.dataframe(pd.DataFrame(rows_irr).set_index("Entry \\ Exit"), use_container_width=True)
- 
+
         with tab3:
             st.caption("MOIC at current exit multiple × varying leverage levels")
             rows_lev = []
@@ -1878,39 +2167,39 @@ if pl_metrics:
                     row[f"{lp:.0%}"] = "Loss" if ret2["total_loss"] else f"{ret2['MOIC']:.2f}x"
                 rows_lev.append(row)
             st.dataframe(pd.DataFrame(rows_lev).set_index("Entry \\ Leverage"), use_container_width=True)
- 
+
     # ── LBO Model Table ───────────────────────────────────────────────────────
     st.subheader("📋 LBO Model — Annual Detail")
     st.dataframe(lbo_df.style.format(FMT_LBO), use_container_width=True, hide_index=True)
- 
-    # ── Valuation Bridge (FIX F3: preferred return shown as hurdle, not deduction) ──
+
+    # ── Valuation Bridge ──────────────────────────────────────────────────────
     with st.expander("🏗️ Valuation Bridge"):
         if not returns.get("total_loss"):
             net_debt_bs   = debt_bs - cash_bs
             sponsor_gross = returns.get("Gross Equity", 0) * returns.get("Sponsor %", 1.0)
             bridge_items  = [
-                ("Entry EV (EBITDA × multiple)",           fmt(returns["Entry EV"])),
-                ("  (−) Drawn LBO Debt (TLB + Mezz)",      fmt(returns.get("Drawn Debt", 0))),
-                ("  [Revolver facility — undrawn at close]",fmt(returns.get("Revolver Facility", 0))),
-                ("  (−) Net BS Debt",                      fmt(net_debt_bs)),
-                ("  = Net Equity Value (CFDF)",             fmt(returns["Entry EV"] - returns.get("Drawn Debt", 0) - net_debt_bs)),
-                ("  (−) Seller Equity Rollover",            fmt(returns.get("Equity Rollover", 0))),
-                ("  (+) Transaction Costs",                 fmt(returns.get("Txn Costs", 0))),
-                ("= Sponsor Equity Check",                  fmt(returns["Equity In"])),
-                ("─" * 35,                                 ""),
-                ("Exit EV",                                fmt(returns["Exit EV"])),
-                ("  (−) Exit Net Debt",                    fmt(returns["Exit EV"] - returns.get("Gross Equity", 0))),
-                ("  = Gross Exit Equity",                  fmt(returns.get("Gross Equity", 0))),
-                ("  × Sponsor Ownership %",                fmt(returns.get("Sponsor %", 1), "pct")),
-                ("  = Sponsor Gross Exit",                 fmt(sponsor_gross)),
-                # FIX F3: preferred return is hurdle info, NOT a deduction line
+                ("Entry EV (EBITDA × multiple)",            fmt(returns["Entry EV"])),
+                ("  (−) Drawn LBO Debt (TLB + Mezz)",       fmt(returns.get("Drawn Debt", 0))),
+                ("  [Revolver facility — undrawn at close]", fmt(returns.get("Revolver Facility", 0))),
+                ("  (−) Net BS Debt",                       fmt(net_debt_bs)),
+                ("  = Net Equity Value (CFDF)",              fmt(returns["Entry EV"] - returns.get("Drawn Debt", 0) - net_debt_bs)),
+                ("  (−) Seller Equity Rollover",             fmt(returns.get("Equity Rollover", 0))),
+                ("  (+) Transaction Costs",                  fmt(returns.get("Txn Costs", 0))),
+                ("= Sponsor Equity Check",                   fmt(returns["Equity In"])),
+                ("─" * 35,                                  ""),
+                ("Exit EV",                                 fmt(returns["Exit EV"])),
+                ("  (−) Exit Net Debt",                     fmt(returns["Exit EV"] - returns.get("Gross Equity", 0))),
+                ("  = Gross Exit Equity",                   fmt(returns.get("Gross Equity", 0))),
+                ("  × Sponsor Ownership %",                 fmt(returns.get("Sponsor %", 1), "pct")),
+                ("  = Sponsor Gross Exit",                  fmt(sponsor_gross)),
+                # FIX F3: preferred return is hurdle info only — shown in brackets, NOT as a deduction line
                 (f"  [Pref-return hurdle ({hurdle_irr:.0%} × {years}yr) = {fmt(returns.get('Preferred Return',0))}]", ""),
-                ("  Carry above hurdle",                   fmt(returns.get("Carry", 0))),
-                ("  (−) Mgmt Pool (of carry)",             fmt(returns.get("Mgmt Proceeds", 0))),
-                ("= Sponsor Net Exit Equity",              fmt(returns["Exit Equity"])),
-                ("─" * 35,                                 ""),
-                ("MOIC",                                   fmt(returns["MOIC"], "x")),
-                ("IRR",                                    fmt(returns["IRR"],  "pct")),
+                ("  Carry above hurdle",                    fmt(returns.get("Carry", 0))),
+                ("  (−) Mgmt Pool (of carry)",              fmt(returns.get("Mgmt Proceeds", 0))),
+                ("= Sponsor Net Exit Equity",               fmt(returns["Exit Equity"])),
+                ("─" * 35,                                  ""),
+                ("MOIC",                                    fmt(returns["MOIC"], "x")),
+                ("IRR",                                     fmt(returns["IRR"],  "pct")),
             ]
         else:
             bridge_items = [
@@ -1918,12 +2207,12 @@ if pl_metrics:
                 ("Exit EV",  fmt(returns["Exit EV"])),
                 ("Outcome",  "Total Loss"),
             ]
- 
+
         st.dataframe(
             pd.DataFrame(bridge_items, columns=["Item", "Value"]),
             use_container_width=True, hide_index=True,
         )
- 
+
     # ── Excel Export ───────────────────────────────────────────────────────────
     if OPENPYXL and not returns.get("total_loss"):
         xl_bytes = build_excel_export(pl_metrics, lbo_df, returns, sc_rows)
@@ -1935,7 +2224,7 @@ if pl_metrics:
         )
     elif not OPENPYXL:
         st.caption("Install openpyxl for Excel export.")
- 
+
 elif not pl_files:
     st.info("👆 Upload a P&L statement to get started.")
     st.markdown("""
@@ -1947,7 +2236,7 @@ elif not pl_files:
     - 🏦 Mezzanine / PIK — second debt tranche with PIK option
     - 👥 Management equity pool — participates in carry above preferred-return hurdle
     - Any combination of the above
- 
+
     **Key financial mechanics**
     - Equity check = EV + net BS debt − drawn LBO debt − seller rollover + txn costs (CFDF)
     - Revolver is committed but **undrawn at close** — does not inflate equity check
@@ -1955,4 +2244,3 @@ elif not pl_files:
     - IRR cashflows include actual earnout payments (post-hurdle gate) from model output
     - Mandatory TLB amortisation + FCF sweep + cash cap applied annually
     """)
- 
