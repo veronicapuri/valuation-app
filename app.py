@@ -1457,61 +1457,61 @@ if pl_files:
     else:
         df_pl = classify_pl(df_pl, use_ai=use_ai, api_key=api_key or "")
 
-            st.markdown("---")
-            st.header("📋 Step 2 — Review & Correct P&L Classifications")
-            st.caption(
-                "Every row is editable. Use the Category dropdown to fix "
-                "misclassified items. Corrections are saved to memory for future uploads."
-            )
+    st.markdown("---")
+    st.header("📋 Step 2 — Review & Correct P&L Classifications")
+    st.caption(
+        "Every row is editable. Use the Category dropdown to fix "
+        "misclassified items. Corrections are saved to memory for future uploads."
+    )
 
-            if total_addbacks > 0:
-                st.info(
-                    f"🧹 **EBITDA normalisation active:** {fmt(total_addbacks)} "
-                    "will be added back before computing EBITDA."
-                )
+    if total_addbacks > 0:
+        st.info(
+            f"🧹 **EBITDA normalisation active:** {fmt(total_addbacks)} "
+            "will be added back before computing EBITDA."
+        )
               
-            unknown_rows = df_pl[df_pl["Category"] == "Unknown"]
+    unknown_rows = df_pl[df_pl["Category"] == "Unknown"]
             
-            # Ignore zero-value noise rows
-            unknown_rows = unknown_rows[unknown_rows["Amount"] != 0]
+    # Ignore zero-value noise rows
+    unknown_rows = unknown_rows[unknown_rows["Amount"] != 0]
             
-            unknown_count = len(unknown_rows)
-            if unknown_count:
-                st.warning(
-                    f"⚠️ {unknown_count} row(s) unclassified. "
-                    "Fix them below or enable AI Classification in the sidebar."
-                )
+    unknown_count = len(unknown_rows)
+    if unknown_count:
+        st.warning(
+            f"⚠️ {unknown_count} row(s) unclassified. "
+            "Fix them below or enable AI Classification in the sidebar."
+        )
               
-            df_display = df_pl.copy()
+    df_display = df_pl.copy()
             
-            # Ensure numeric (fix OCR issues)
-            df_display["Amount"] = pd.to_numeric(df_display["Amount"], errors="coerce")
+    # Ensure numeric (fix OCR issues)
+    df_display["Amount"] = pd.to_numeric(df_display["Amount"], errors="coerce")
             
-            # Flip sign ONLY for Tax (display only)
-            mask = df_display["Category"] == "Tax"
-            df_display.loc[mask, "Amount"] = df_display.loc[mask, "Amount"].abs()
+    # Flip sign ONLY for Tax (display only)
+    mask = df_display["Category"] == "Tax"
+    df_display.loc[mask, "Amount"] = df_display.loc[mask, "Amount"].abs()
             
-            df_edited = st.data_editor(
-                df_display,
-                use_container_width=True,
-                num_rows="fixed",
-                column_config={
-                    "Category": st.column_config.SelectboxColumn(
-                        "Category",
-                        options=["Revenue", "COGS", "OpEx", "D&A", "Interest", "Other Income", "Tax", "Ignore"],
-                    )
-                },
+    df_edited = st.data_editor(
+        df_display,
+        use_container_width=True,
+        num_rows="fixed",
+        column_config={
+            "Category": st.column_config.SelectboxColumn(
+                "Category",
+                options=["Revenue", "COGS", "OpEx", "D&A", "Interest", "Other Income", "Tax", "Ignore"],
             )
+        },
+    )
           
-            # Persist corrections to memory
-            mem = load_memory()
-            for _, r in df_pl.iterrows():
-                if r["Category"] not in ("Unknown", "Ignore"):
-                    mem[r["Line Item"]] = r["Category"]
-            save_memory(mem)
+    # Persist corrections to memory
+    mem = load_memory()
+    for _, r in df_pl.iterrows():
+        if r["Category"] not in ("Unknown", "Ignore"):
+            mem[r["Line Item"]] = r["Category"]
+    save_memory(mem)
 
-            active_pl  = df_pl[~df_pl["Category"].isin(["Ignore", "Unknown"])]
-            pl_metrics = compute_pl(active_pl, addbacks=total_addbacks)
+    active_pl  = df_pl[~df_pl["Category"].isin(["Ignore", "Unknown"])]
+    pl_metrics = compute_pl(active_pl, addbacks=total_addbacks)
 
 # =============================================================================
 # PROCESS BALANCE SHEET
@@ -1524,39 +1524,39 @@ if bs_files:
     else:
         df_bs = classify_bs(df_bs)
 
-            st.markdown("---")
-            st.subheader("🏦 Balance Sheet — Review Classifications")
-            st.caption(
-                "Company-named bank accounts are auto-classified as Cash. "
-                "Director loans appear under Debt."
-            )
+    st.markdown("---")
+    st.subheader("🏦 Balance Sheet — Review Classifications")
+    st.caption(
+        "Company-named bank accounts are auto-classified as Cash. "
+        "Director loans appear under Debt."
+    )
 
-            df_bs = st.data_editor(
-                df_bs,
-                column_config={
-                    "Category": st.column_config.SelectboxColumn(
-                        "Category", options=BS_CATEGORIES
-                    ),
-                    "Amount": st.column_config.NumberColumn("Amount", format="$ %.0f"),
-                },
-                use_container_width=True,
-                hide_index=True,
-                num_rows="dynamic",
-            )
+    df_bs = st.data_editor(
+        df_bs,
+        column_config={
+            "Category": st.column_config.SelectboxColumn(
+                "Category", options=BS_CATEGORIES
+            ),
+            "Amount": st.column_config.NumberColumn("Amount", format="$ %.0f"),
+        },
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+    )
 
-            cash_bs     = df_bs.loc[df_bs["Category"] == "Cash",        "Amount"].sum()
-            debt_bs     = df_bs.loc[df_bs["Category"] == "Debt",        "Amount"].sum()
-            receivables = df_bs.loc[df_bs["Category"] == "Receivables", "Amount"].sum()
-            payables    = df_bs.loc[df_bs["Category"] == "Payables",    "Amount"].sum()
-            inventory   = df_bs.loc[df_bs["Category"] == "Inventory",   "Amount"].sum()
-            bs_derived_nwc = receivables + inventory - payables
+    cash_bs     = df_bs.loc[df_bs["Category"] == "Cash",        "Amount"].sum()
+    debt_bs     = df_bs.loc[df_bs["Category"] == "Debt",        "Amount"].sum()
+    receivables = df_bs.loc[df_bs["Category"] == "Receivables", "Amount"].sum()
+    payables    = df_bs.loc[df_bs["Category"] == "Payables",    "Amount"].sum()
+    inventory   = df_bs.loc[df_bs["Category"] == "Inventory",   "Amount"].sum()
+    bs_derived_nwc = receivables + inventory - payables
 
-            if receivables == 0:
-                st.warning(
-                    "⚠️ No receivables detected. This usually means:\n"
-                    "- Assets page missing, OR\n"
-                    "- Receivables misclassified (e.g. 'amount due from customers')."
-                )
+    if receivables == 0:
+        st.warning(
+            "⚠️ No receivables detected. This usually means:\n"
+            "- Assets page missing, OR\n"
+            "- Receivables misclassified (e.g. 'amount due from customers')."
+        )
 
 # =============================================================================
 # AUTO-CALIBRATE BUTTON
