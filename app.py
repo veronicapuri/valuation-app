@@ -1147,37 +1147,6 @@ def chart_fcf_ebitda(lbo_df: pd.DataFrame):
 
     st.plotly_chart(fig, use_container_width=True)
 
-def chart_moic_waterfall(returns: dict):
-    if not PLOTLY or returns.get("total_loss"):
-        return
-
-    fig = go.Figure(go.Waterfall(
-        name="Value Bridge",
-        orientation="v",
-        measure=["absolute", "relative", "relative", "total"],
-        x=["Equity In", "EBITDA Growth", "Multiple Expansion", "Exit Equity"],
-        y=[
-            -returns["Equity In"],
-            returns["Exit EV"] * 0.55,
-            returns["Exit EV"] * 0.45 - returns["Entry EV"] * 0.45,
-            0,
-        ],
-        totals={"marker": {"color": "#1e3a5f"}},
-        increasing={"marker": {"color": "#16a34a"}},
-        decreasing={"marker": {"color": "#dc2626"}},
-    ))
-
-    fig.update_layout(
-        title="Equity Value Bridge (Illustrative)",
-        height=350,
-        margin=dict(l=0, r=0, t=80, b=20),
-        waterfallgap=0.3,  # 👈 spacing fix
-        plot_bgcolor="#f8fafc",
-        paper_bgcolor="#ffffff",
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
 # =============================================================================
 # EXCEL EXPORT
 # =============================================================================
