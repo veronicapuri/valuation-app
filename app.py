@@ -1640,6 +1640,12 @@ if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
                 f"**Suggested exit:** {r['suggested_exit']}"
             )
     # Suggested payment structure
+    rev = pl_metrics["Revenue"]
+    ebitda = pl_metrics["EBITDA"]
+    margin = pl_metrics["EBITDA Margin"]
+    leverage = st.session_state.cal_leverage / 100
+    entry = st.session_state.cal_entry
+    
     base_cash_pct = 0.2 if rev < 2_000_000 else 0.3
     
     # safer deals = more upfront
