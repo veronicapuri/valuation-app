@@ -386,19 +386,34 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     # ── CapEx / NWC ───────────────────────────────────────────────────────────
     capex = 0.03 if margin >= 0.25 else 0.06
     nwc   = 0.04 if margin >= 0.25 else 0.08
+    
+    # ── Payment structure suggestion ─────────────────────────
+    base_cash_pct = 0.2 if rev < 2_000_000 else 0.3
+    
+    if margin >= 0.25:
+        base_cash_pct += 0.1
+    
+    base_cash_pct -= leverage * 0.2
+    base_cash_pct = max(0.1, min(0.6, base_cash_pct))
+    
+    years = 5
+    annual_payment = (entry * ebitda * base_cash_pct) / years
+    payment_schedule = [annual_payment] * years
 
     return {
-        "entry_multiple": entry,
-        "exit_multiple":  exit_,
-        "growth":         growth,
-        "target_margin":  target_margin,
-        "leverage_pct":   leverage,
-        "capex_pct":      capex,
-        "nwc_pct":        nwc,
+        "entry_multiple":   entry,
+        "exit_multiple":    exit_,
+        "growth":           growth,
+        "target_margin":    target_margin,
+        "payment_schedule": payment_schedule,
+        "cash_pct":         base_cash_pct,
+        "leverage_pct":     leverage,
+        "capex_pct":        capex,
+        "nwc_pct":          nwc,
         "rationale": {
-            "revenue_tier":   f"${rev/1e6:.2f}M revenue → {base_entry:.1f}x base",
-            "margin_quality": f"{margin*100:.1f}% margin → {margin_adj:+.1f}x adj",
-            "leverage_ratio": f"{leverage_ratio:.1f}× net debt/EBITDA → {lev_adj:+.1f}x adj",
+            "revenue_tier":    f"${rev/1e6:.2f}M revenue → {base_entry:.1f}x base",
+            "margin_quality":  f"{margin*100:.1f}% margin → {margin_adj:+.1f}x adj",
+            "leverage_ratio":  f"{leverage_ratio:.1f}× net debt/EBITDA → {lev_adj:+.1f}x adj",
             "suggested_entry": f"{entry:.1f}x",
             "suggested_exit":  f"{exit_:.1f}x",
         },
@@ -575,7 +590,27 @@ def read_any_file(uploaded_file):
     st.error(f"Unsupported file type: {name}")
     return None
 
+def load_and_combine(files):
+    dfs = []
+    for f in files:
+        raw = read_any_file(f)
+        if raw is not None:
+            clean = smart_clean(raw)
+            if clean is not None:
+                dfs.append(clean)
 
+    if not dfs:
+        return None
+
+    # concatenate + group by line item
+    df = pd.concat(dfs, ignore_index=True)
+
+    df = (
+        df.groupby("Line Item", as_index=False)["Amount"]
+        .sum()
+    )
+
+    return df
 # =============================================================================
 # CLEANING PIPELINE
 # =============================================================================
@@ -903,23 +938,27 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     # apply haircut
     effective_leverage = params["leverage_pct"] * haircut
 
-    # initial leverage
-    total_debt = entry_ev * effective_leverage
+    # --- initial leverage target
+    target_debt = entry_ev * effective_leverage
     
-    # constraint 1: debt / EBITDA
-    max_debt_ebitda = ebitda * 2.5
-    
-    # constraint 2: interest coverage
-    avg_rate = (params["tlb_rate"] * 0.85 + params["rev_rate"] * 0.15)
-    max_debt_interest = ebitda / (2.0 * avg_rate) if avg_rate > 0 else total_debt
-    
-    # final debt = minimum of all
-    total_debt = min(total_debt, max_debt_ebitda, max_debt_interest)
-    tlb        = total_debt * 0.85
-    revolver   = total_debt * 0.15
-
     net_debt_bs = debt_bs - cash_bs
-    equity_in   = entry_ev - total_debt + net_debt_bs
+    
+    if params.get("use_payment_plan"):
+        payment_schedule = params.get("payment_schedule", [])
+        equity_in = sum(payment_schedule)
+    
+        # enforce minimum equity from leverage
+        min_equity = entry_ev - target_debt
+        equity_in = max(equity_in, min_equity)
+    
+        total_debt = max(0, entry_ev - equity_in)
+    else:
+        total_debt = target_debt
+        equity_in = entry_ev - total_debt + net_debt_bs
+    
+    # NOW split debt (after final number is known)
+    tlb = total_debt * 0.85
+    revolver = total_debt * 0.15
 
     if equity_in <= 0:
         st.warning(
@@ -952,7 +991,14 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         prev_nwc  = nwc
         capex     = rev * params["capex_pct"]
         fcf = (ebit_lbo - tax) + da_y - capex - delta_nwc
-        cash     += fcf
+
+        payment = 0
+        if params.get("use_payment_plan"):
+            payment = params["payment_schedule"][i] if i < len(params["payment_schedule"]) else 0
+        
+        fcf_after_payment = fcf - payment
+        
+        cash += fcf_after_payment
 
         # Revolver draw if cash below minimum
         if cash < params["min_cash"]:
@@ -985,20 +1031,22 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
         cash = min(cash, max_cash)
 
         rows.append({
-            "Year":         i + 1,
-            "Revenue":      rev,
-            "EBITDA":       ebitda_y,
+            "Year": i + 1,
+            "Revenue": rev,
+            "EBITDA": ebitda_y,
             "EBITDA Margin": ebitda_y / rev if rev else 0,
-            "Interest":     interest,
-            "Tax":          tax,
-            "CapEx":        capex,
-            "ΔNWC":         delta_nwc,
-            "FCF":          fcf,
-            "Debt Repaid":  debt_repaid,
-            "TLB":          tlb,
-            "Revolver":     revolver,
-            "Cash":         cash,
-            "Net Debt":     tlb + revolver - cash,
+            "Interest": interest,
+            "Tax": tax,
+            "CapEx": capex,
+            "ΔNWC": delta_nwc,
+            "FCF": fcf,
+            "Payment": payment,
+            "FCF After Payment": fcf_after_payment,
+            "Debt Repaid": debt_repaid,
+            "TLB": tlb,
+            "Revolver": revolver,
+            "Cash": cash,
+            "Net Debt": tlb + revolver - cash,
         })
 
     lbo_df = pd.DataFrame(rows)
@@ -1017,7 +1065,12 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     moic = exit_equity / equity_in
 
     # Build cash flow series for IRR: [-equity_in, FCF_1, ..., FCF_N + exit_equity]
-    cashflows = [-equity_in] + [0] * (params["years"] - 1) + [exit_equity]
+
+    if params.get("use_payment_plan"):
+        cashflows = [-p for p in params["payment_schedule"]]
+        cashflows[-1] += exit_equity
+    else:
+        cashflows = [-equity_in] + [0] * (params["years"] - 1) + [exit_equity]
 
     try:
         irr = compute_irr(cashflows)
@@ -1273,6 +1326,37 @@ else:
         for i in range(years)
     ]
 
+st.sidebar.subheader("💰 Payment Structure")
+
+use_payment_plan = st.sidebar.checkbox("Enable staged payments")
+
+payment_schedule = []
+
+# Override with auto-calibrated payment if active
+if st.session_state.calibrated and "cal_payment" in st.session_state:
+    payment_schedule = st.session_state.cal_payment
+
+if use_payment_plan:
+    st.sidebar.caption("Define cash payments across holding period")
+
+    for i in range(years):
+        val = st.sidebar.number_input(
+            f"Year {i} payment ($)",
+            min_value=0,
+            value=0,
+            step=10000,
+            key=f"pay_{i}"
+        )
+        payment_schedule.append(val)
+
+    total_cash_pct = st.sidebar.slider(
+        "Total Cash % of Purchase Price",
+        0, 100, 20
+    ) / 100
+
+if use_payment_plan and payment_schedule:
+    st.sidebar.caption(f"Auto payments: {[int(p) for p in payment_schedule]}")
+
 st.sidebar.subheader("Capital Structure")
 leverage_pct = st.sidebar.slider(
     "Leverage % of Entry EV", 0, 100,
@@ -1311,6 +1395,10 @@ params = dict(
     use_override_margin=True,       # always set — prevents KeyError in run_lbo
 )
 
+params["use_payment_plan"] = use_payment_plan
+
+if use_payment_plan:
+    params["payment_schedule"] = payment_schedule
 
 # =============================================================================
 # MAIN PAGE
@@ -1337,13 +1425,17 @@ st.markdown("---")
 st.header("📂 Step 1 — Upload Financials")
 col_pl, col_bs = st.columns(2)
 with col_pl:
-    pl_file = st.file_uploader(
-        "P&L Statement", type=["xlsx", "xls", "csv", "pdf"],
+    pl_files = st.file_uploader(
+        "P&L Statement(s)",
+        type=["xlsx", "xls", "csv", "pdf"],
+        accept_multiple_files=True,
         help="Most recent full-year P&L. Multi-year not yet supported — use most recent year.",
     )
 with col_bs:
-    bs_file = st.file_uploader(
-        "Balance Sheet (optional)", type=["xlsx", "xls", "csv", "pdf"],
+    bs_files = st.file_uploader(
+        "Balance Sheet(s) (optional)",
+        type=["xlsx", "xls", "csv", "pdf"],
+        accept_multiple_files=True,
         help="Used to derive cash, debt, and NWC for bridge calculations.",
     )
 
@@ -1357,16 +1449,13 @@ sc_rows = []
 # =============================================================================
 # PROCESS P&L
 # =============================================================================
-if pl_file:
-    raw_pl = read_any_file(pl_file)
+if pl_files:
+    df_pl = load_and_combine(pl_files)
 
-    if raw_pl is not None:
-        df_pl = smart_clean(raw_pl)
-
-        if df_pl is None:
-            st.error("P&L could not be parsed. Please check file format.")
-        else:
-            df_pl = classify_pl(df_pl, use_ai=use_ai, api_key=api_key or "")
+    if df_pl is None:
+        st.error("P&L could not be parsed.")
+    else:
+        df_pl = classify_pl(df_pl, use_ai=use_ai, api_key=api_key or "")
 
             st.markdown("---")
             st.header("📋 Step 2 — Review & Correct P&L Classifications")
@@ -1424,20 +1513,16 @@ if pl_file:
             active_pl  = df_pl[~df_pl["Category"].isin(["Ignore", "Unknown"])]
             pl_metrics = compute_pl(active_pl, addbacks=total_addbacks)
 
-
 # =============================================================================
 # PROCESS BALANCE SHEET
 # =============================================================================
-if bs_file:
-    raw_bs = read_any_file(bs_file)
+if bs_files:
+    df_bs = load_and_combine(bs_files)
 
-    if raw_bs is not None:
-        df_bs = smart_clean(raw_bs)
-
-        if df_bs is None:
-            st.error("Balance Sheet could not be parsed. Please check file format.")
-        else:
-            df_bs = classify_bs(df_bs)
+    if df_bs is None:
+        st.error("Balance Sheet could not be parsed.")
+    else:
+        df_bs = classify_bs(df_bs)
 
             st.markdown("---")
             st.subheader("🏦 Balance Sheet — Review Classifications")
@@ -1492,6 +1577,9 @@ if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
             st.session_state.cal_exit     = cal["exit_multiple"]
             st.session_state.cal_growth   = int(cal["growth"] * 100)
             st.session_state.cal_margin   = int(cal["target_margin"] * 100)
+            if "payment_schedule" in cal:
+                st.session_state.cal_payment = cal["payment_schedule"]
+            st.session_state.cal_cash_pct = cal["cash_pct"]
             st.session_state.cal_leverage = int(cal["leverage_pct"] * 100)
             st.session_state.cal_capex    = int(cal["capex_pct"] * 100)
             st.session_state.cal_nwc      = int(cal["nwc_pct"] * 100)
@@ -1507,7 +1595,25 @@ if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
                 f"- **Suggested entry:** {r['suggested_entry']}  |  "
                 f"**Suggested exit:** {r['suggested_exit']}"
             )
+    # Suggested payment structure
+    base_cash_pct = 0.2 if rev < 2_000_000 else 0.3
+    
+    # safer deals = more upfront
+    if margin >= 0.25:
+        base_cash_pct += 0.1
+    
+    # higher leverage → lower upfront cash
+    base_cash_pct -= leverage * 0.2
+    
+    base_cash_pct = max(0.1, min(0.6, base_cash_pct))
+    
+    # simple evenly distributed schedule
+    years = 5
+    annual_payment = (entry * ebitda * base_cash_pct) / years
+    
+    payment_schedule = [annual_payment] * years
 
+    
 
 # =============================================================================
 # VALUATION OUTPUT
@@ -1562,7 +1668,7 @@ if pl_metrics:
         st.dataframe(pl_bridge, use_container_width=True, hide_index=True)
 
     # ── Balance Sheet Snapshot ────────────────────────────────────────────────
-    if bs_file:
+    if bs_files:
         st.subheader("Balance Sheet Snapshot")
         b1, b2, b3, b4 = st.columns(4)
         b1.metric("Cash & Equivalents",  fmt(cash_bs))
@@ -1789,7 +1895,7 @@ if pl_metrics:
     elif not OPENPYXL:
         st.caption("Install openpyxl for Excel export: `pip install openpyxl`")
 
-elif not pl_file:
+elif not pl_files:
     st.info("👆 Upload a P&L statement above to get started.")
     st.markdown("""
     **What this tool does:**
