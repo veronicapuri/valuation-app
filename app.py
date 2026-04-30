@@ -388,6 +388,11 @@ def auto_calibrate(metrics: dict, cash_bs: float, debt_bs: float) -> dict:
     nwc   = 0.04 if margin >= 0.25 else 0.08
     
     # ── Payment structure suggestion ─────────────────────────
+
+    rev = metrics.get("Revenue", 0)
+    ebitda = metrics.get("EBITDA", 0)
+    margin = metrics.get("EBITDA Margin", 0)
+    
     base_cash_pct = 0.2 if rev < 2_000_000 else 0.3
     
     if margin >= 0.25:
