@@ -987,43 +987,39 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     sponsor_ownership = 1.0 - equity_pct
     mgmt_pool_pct     = params.get("mgmt_pool_pct", 0.0) if params.get("use_mgmt_pool") else 0.0
 
-    # ── Equity check ──────────────────────────────────────────────────────────
+    # ── Debt setup (DO THIS ONCE) ──────────────────────────────────────────────
+    total_debt = entry_ev * effective_leverage
+    
+    mezz_actual   = min(mezz_amount, total_debt)
+    senior_actual = max(0.0, total_debt - mezz_actual)
+    
+    revolver_facility = min(revolver_facility, senior_actual)
+    tlb               = max(0.0, senior_actual - revolver_facility)
+    tlb_original      = tlb
+    mezz_balance      = mezz_actual
+    
+    drawn_at_close = tlb + mezz_actual
+    
+    # ── Equity check ───────────────────────────────────────────────────────────
     if params.get("use_payment_plan"):
         payment_schedule = params.get("payment_schedule", [])
-        # Under a payment plan the consideration is paid in instalments
-        # (vendor finance).  At close the sponsor writes a smaller cheque;
-        # remaining payments flow through as annual cash outflows in the model.
-        base_equity      = max(0.0, entry_ev + net_debt_bs - drawn_at_close)
-        equity_rollover  = base_equity * equity_pct
-        min_sponsor_eq   = base_equity * sponsor_ownership + txn_costs
-
-        equity_in = entry_ev + net_debt_bs + txn_costs - total_debt - equity_rollover
-        equity_in = max(equity_in, min_sponsor_eq)
-
-        # FIX F2: net_debt_bs must be included when back-solving total debt
-        # under the payment plan.  The original omitted it, understating how
-        # much debt the deal carries.
-        total_debt = entry_ev * effective_leverage
-
-        mezz_actual       = min(mezz_amount, total_debt)
-        senior_actual     = max(0.0, total_debt - mezz_actual)
-        revolver_facility = min(revolver_facility, senior_actual)
-        tlb               = max(0.0, senior_actual - revolver_facility)
-        tlb_original      = tlb
-        mezz_balance      = mezz_actual
-        drawn_at_close    = tlb + mezz_actual
-
-    else:
-        # Standard (non-payment-plan) path
-        base_equity     = max(0.0, entry_ev + net_debt_bs - drawn_at_close)
-        equity_rollover = base_equity * equity_pct
-        equity_in       = base_equity * sponsor_ownership + txn_costs
-        total_debt      = drawn_at_close + revolver_facility   # committed (for reporting)
-
+        # (payments affect cashflows later, NOT capital structure)
+    
+    # SAME LOGIC FOR BOTH CASES
+    base_equity     = max(0.0, entry_ev + net_debt_bs - drawn_at_close)
+    equity_rollover = base_equity * equity_pct
+    equity_in       = base_equity * sponsor_ownership + txn_costs
+    
+    
+    # ── Reporting only ──────────────────────────────────────────────────────────
+    total_debt = drawn_at_close + revolver_facility
+    
+    
+    # ── Safety check ────────────────────────────────────────────────────────────
     if equity_in <= 0:
         st.warning("⚠️ Sponsor equity check is zero/negative — flooring at $1.")
         equity_in = 1.0
-
+        
     # ── Annual model setup ────────────────────────────────────────────────────
     cash           = float(params["min_cash"])
     use_margin     = params.get("use_override_margin", True)
