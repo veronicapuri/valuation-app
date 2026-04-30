@@ -2,41 +2,6 @@
 SME Valuation & LBO Tool  ·  Production-ready
 ==============================================
 Singapore / SEA SME buyout modelling.
- 
-FIXES in this version vs v2
-────────────────────────────
- F1. Revolver equity bug — equity check now uses drawn_at_close (TLB + mezz)
-     not total_debt_at_entry (which wrongly included the undrawn revolver
-     facility, understating equity_in by exactly revolver_facility).
- 
- F2. Payment-plan total_debt recalc — now includes net_debt_bs so that
-     companies with existing net debt generate the right LBO debt balance.
- 
- F3. Preferred-return waterfall mismatch — preferred return is a hurdle for
-     the mgmt-pool carry calculation only. It was shown as a cash deduction
-     in the valuation bridge, making the bridge fail to tie. Bridge now
-     correctly shows it as an informational threshold, not a deduction.
- 
- F4. IRR cashflows excluded earnout payments — earnout outflows are now
-     pulled from lbo_df (actual paid amounts, post-hurdle gate) so IRR
-     correctly reflects conditional milestone payments.
- 
- F5. Earnout decoupled from staged payments — earnout now works as a
-     standalone toggle independent of use_payment_plan.
- 
-Features retained from v2
-──────────────────────────
- - Multi-year P&L column detection
- - Sector-aware auto-calibration
- - Revolver as fixed facility (committed, undrawn at close)
- - Leverage sensitivity grid
- - HP / finance-lease BS split
- - Earnout with EBITDA hurdle gate
- - Mezzanine / PIK tranche
- - Management equity pool + preferred-return carry waterfall
- - All v1 fixes (equity sign, rollover at entry+exit, IRR anchoring,
-   scenario table, debt-sweep/cash-cap controls, mandatory TLB amort,
-   BS section-trigger detection)
 """
  
 import streamlit as st
