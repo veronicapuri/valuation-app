@@ -1680,7 +1680,7 @@ if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
                 f"- **Sector:** {r['sector']}\n"
                 f"- **Revenue tier:** {r['revenue_tier']}\n"
                 f"- **Margin quality:** {r['margin_quality']}\n"
-                f"- **Leverage:** {r['leverage_ratio']}\n"
+                f"- **Current leverage (BS):** {r['leverage_ratio']}\n"
                 f"- **Suggested entry:** {r['suggested_entry']} | "
                 f"**exit:** {r['suggested_exit']}"
             )
