@@ -461,25 +461,29 @@ def _parse_line_to_label_amount(line: str):
         except: return 0.0
 
     parsed     = [(pos, raw, _to_float(raw)) for pos, raw in found]
-    formatted  = [(p, r, v) for p, r, v in parsed if "," in r or "." in r or "(" in r]
-    plain_ints = [(p, r, v) for p, r, v in parsed
-                  if not ("," in r or "." in r or "(" in r)]
-
-    if formatted:
-        cur_pos, cur_raw, _ = formatted[0]
-    else:
-        if len(plain_ints) >= 3 and abs(plain_ints[0][2]) <= 20:
-            cur_pos, cur_raw, _ = plain_ints[1]
-        else:
-            cur_pos, cur_raw, _ = plain_ints[0]
+    # Always use first number position for label split
+    first_pos = parsed[0][0]
+    label = _strip_note_refs(line[:first_pos].strip())
+    label = re.sub(r"[|_]{2,}", "", label).strip()
+    label = re.sub(r"\s{2,}", " ", label)
+    
+    if not label:
+        return None
+    
+    values = [v for _, _, v in parsed]
+    
+    return label, values
 
     label = _strip_note_refs(line[:cur_pos].strip())
     label = re.sub(r"[|_]{2,}", "", label).strip()
     label = re.sub(r"\s{2,}", " ", label)
     if not label:
         return None
-    return label, cur_raw
-
+    
+    # 🔥 NEW: return ALL values, not just one
+    values = [v for _, _, v in parsed]
+    
+    return label, values
 
 def _ocr_pdf(file_bytes: bytes):
     if not PDF_OCR:
