@@ -439,87 +439,76 @@ def _preprocess_image_for_ocr(img):
     img = img.point(lambda x: 255 if x > 140 else 0)
     return img
 
-_AMOUNT_RE = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+")
+
+_AMOUNT_RE = re.compile(r"(\([\d,]+(?:\.\d+)?\)|-?[\d,]+(?:\.\d+)?)")
 
 
 def _strip_note_refs(label: str) -> str:
     return re.sub(r"\s+\b\d{1,2}\b\s*$", "", label).strip()
 
-def _parse_line_multi_amount(line: str):
+
+def _parse_line_to_label_amount(line: str):
     line = line.strip()
     if not line:
         return None
-
-    # Fix OCR merged numbers
-    line = re.sub(r"(\d)(\d{3},\d{3})", r"\1 \2", line)
-
     found = [(m.start(), m.group()) for m in _AMOUNT_RE.finditer(line)]
     if not found:
         return None
 
     def _to_float(s):
         s = s.replace(",", "").replace("(", "-").replace(")", "")
-        try:
-            return float(s)
-        except:
-            return 0.0
+        try:    return float(s)
+        except: return 0.0
 
-    parsed = [(pos, raw, _to_float(raw)) for pos, raw in found]
+    parsed     = [(pos, raw, _to_float(raw)) for pos, raw in found]
+    formatted  = [(p, r, v) for p, r, v in parsed if "," in r or "." in r or "(" in r]
+    plain_ints = [(p, r, v) for p, r, v in parsed
+                  if not ("," in r or "." in r or "(" in r)]
 
-    first_pos = parsed[0][0]
-    label = _strip_note_refs(line[:first_pos].strip())
+    if formatted:
+        cur_pos, cur_raw, _ = formatted[0]
+    else:
+        if len(plain_ints) >= 3 and abs(plain_ints[0][2]) <= 20:
+            cur_pos, cur_raw, _ = plain_ints[1]
+        else:
+            cur_pos, cur_raw, _ = plain_ints[0]
+
+    label = _strip_note_refs(line[:cur_pos].strip())
     label = re.sub(r"[|_]{2,}", "", label).strip()
     label = re.sub(r"\s{2,}", " ", label)
-
     if not label:
         return None
+    return label, cur_raw
 
-    values = [v for _, _, v in parsed]
-
-    return label, values
 
 def _ocr_pdf(file_bytes: bytes):
     if not PDF_OCR:
         st.error("📦 OCR requires pdf2image + pytesseract + Pillow.")
         return None
-
     try:
         images = convert_from_bytes(file_bytes, dpi=300)
     except Exception as e:
         st.error(f"PDF→image conversion failed: {e}")
         return None
 
-    parsed_rows = []
-
+    rows = []
     for img in images:
         img  = _preprocess_image_for_ocr(img)
-        text = pytesseract.image_to_string(img, config="--psm 4")
-
+        text = pytesseract.image_to_string(img, config="--psm 6")
         for line in text.splitlines():
-            parsed = _parse_line_multi_amount(line)
-
+            parsed = _parse_line_to_label_amount(line)
             if parsed:
-                label, values = parsed
-                parsed_rows.append((label, values))
+                rows.append(list(parsed))
             else:
                 clean = re.sub(r"[|_]{2,}", "", line).strip()
                 if clean:
-                    parsed_rows.append((clean, []))
+                    rows.append([clean, "0"])
 
-    if not parsed_rows:
-        st.error("OCR produced no usable rows.")
+    if not rows:
+        st.error("OCR produced no usable rows. Check PDF quality.")
         return None
+    return pd.DataFrame(rows, columns=["c0", "c1"], dtype=str)
 
-    max_vals = max(len(v) for _, v in parsed_rows)
-
-    rows = []
-    for label, values in parsed_rows:
-        padded = values + [0.0] * (max_vals - len(values))
-        rows.append([label] + padded)
-
-    cols = ["Line Item"] + [f"c{i+1}" for i in range(max_vals)]
-
-    return pd.DataFrame(rows, columns=cols)
 
 def read_any_file(uploaded_file):
     name = uploaded_file.name.lower()
@@ -543,21 +532,16 @@ def read_any_file(uploaded_file):
                 with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                     for page in pdf.pages:
                         for line in (page.extract_text() or "").splitlines():
-                            parsed = _parse_line_multi_amount(line)
+                            parsed = _parse_line_to_label_amount(line)
                             if parsed:
-                                label, values = parsed
-                                text_rows.append([label] + values)
+                                text_rows.append(list(parsed))
                             else:
                                 clean = re.sub(r"[|_]{2,}", "", line).strip()
                                 if clean and not re.fullmatch(r"[\d\s.,\-()]+", clean):
                                     text_rows.append([clean, "0"])
                 if text_rows:
                     st.info("📄 Parsed as plain-text digital PDF.")
-                    max_cols = max(len(r) for r in text_rows)
-                    rows = [r + ["0"] * (max_cols - len(r)) for r in text_rows]
-                    cols = [f"c{i}" for i in range(max_cols)]
-                    return pd.DataFrame(rows, columns=cols, dtype=str)
-                 
+                    return pd.DataFrame(text_rows, columns=["c0", "c1"], dtype=str)
             except Exception:
                 pass
         st.info("📷 Running OCR on scanned PDF…")
@@ -626,28 +610,42 @@ def _is_meta_row(label: str) -> bool:
     return any(p in xl for p in _META_PHRASES)
 
 
-def detect_year_columns_fixed(df):
-    cols = df.columns[1:]
+def detect_year_columns(df: pd.DataFrame):
+    """
+    Return list of (col_index, label) for columns that look like amount columns,
+    sorted by score descending. Used for multi-year P&L detection.
+    """
+    df = df.fillna("").astype(str)
+    df = dedupe_columns(df)
+    df.columns = [f"c{i}" for i in range(len(df.columns))]
 
-    text_block = " ".join(
-        df.iloc[:5, 1:].astype(str).values.flatten().tolist()
-    )
+    # Identify label column (most text, fewest numbers)
+    label_col, label_score = None, -1.0
+    for col in df.columns:
+        non_empty = (df[col].str.strip() != "").sum()
+        numeric   = (parse_amount(df[col]) != 0).sum()
+        sc        = non_empty - numeric * 3
+        if sc > label_score:
+            label_score, label_col = sc, col
 
-    found_years = re.findall(r"20\d{2}", text_block)
+    amount_cols = []
+    for col in df.columns:
+        if col == label_col:
+            continue
+        sc = score_amount_column(df[col])
+        if sc > 0:
+            # Try to find a year header for this column
+            header_candidates = df[col].iloc[:5].tolist()
+            year_label = col
+            for h in header_candidates:
+                if re.search(r"\b20\d{2}\b", str(h)):
+                    year_label = re.search(r"\b20\d{2}\b", str(h)).group()
+                    break
+            amount_cols.append((col, year_label, sc))
 
-    seen = []
-    for y in found_years:
-        if y not in seen:
-            seen.append(y)
+    amount_cols.sort(key=lambda x: -x[2])
+    return label_col, amount_cols
 
-    year_map = {}
-    for i, col in enumerate(cols):
-        if i < len(seen):
-            year_map[col] = seen[i]
-        else:
-            year_map[col] = f"Column {i+1}"
-
-    return year_map
 
 def smart_clean(df: pd.DataFrame, amount_col: str = None):
     df = df.dropna(how="all").reset_index(drop=True)
@@ -657,10 +655,9 @@ def smart_clean(df: pd.DataFrame, amount_col: str = None):
 
     if df.shape[1] == 1:
         def _to_row(text):
-            result = _parse_line_multi_amount(text)
+            result = _parse_line_to_label_amount(text)
             if result:
-                label, values = result
-                return pd.Series([label] + values)
+                return pd.Series(result)
             return pd.Series([text.strip(), "0"])
         rows = df.iloc[:, 0].astype(str).apply(_to_row)
         df   = pd.DataFrame({"c0": rows[0], "c1": rows[1]})
@@ -708,21 +705,13 @@ def load_and_combine(files, amount_col_override: str = None):
     for f in files:
         raw = read_any_file(f)
         if raw is not None:
-            if raw.shape[1] > 2:
-                raw = raw.rename(columns={raw.columns[0]: "Line Item"})
-                clean = raw.copy()
-            else:
-                clean = smart_clean(raw, amount_col=amount_col_override)
+            clean = smart_clean(raw, amount_col=amount_col_override)
             if clean is not None:
                 dfs.append(clean)
     if not dfs:
         return None
     df = pd.concat(dfs, ignore_index=True)
-    
-    # 🔥 group ALL numeric columns
-    value_cols = [c for c in df.columns if c != "Line Item"]
-    
-    df = df.groupby("Line Item", as_index=False)[value_cols].sum()
+    df = df.groupby("Line Item", as_index=False)["Amount"].sum()
     return df
 
 
@@ -1536,35 +1525,36 @@ if pl_files:
 
     amount_col_to_use = None
 
+    if raw_peek is not None and raw_peek.shape[1] > 2:
+        peek_clean = raw_peek.dropna(how="all").fillna("").astype(str)
+        peek_clean = dedupe_columns(peek_clean)
+        peek_clean.columns = [f"c{i}" for i in range(len(peek_clean.columns))]
+        label_col_peek, year_cols = detect_year_columns(peek_clean)
+
+        if len(year_cols) > 1:
+            st.info(
+                f"📅 **Multi-year P&L detected** — found {len(year_cols)} amount columns. "
+                "Select which year to model."
+            )
+            year_labels = [label for _, label, _ in year_cols]
+            chosen_label = st.selectbox("Select year / column to model", year_labels)
+            for col, label, _ in year_cols:
+                if label == chosen_label:
+                    amount_col_to_use = col
+                    st.session_state["pl_year_col"] = col
+                    break
+        else:
+            st.session_state["pl_year_col"] = None
+
     # Now load with chosen column
     for f in pl_files:
         f.seek(0)
-    
-    df_raw = load_and_combine(pl_files)
-    
-    if df_raw is None:
+
+    df_pl = load_and_combine(pl_files, amount_col_override=st.session_state.get("pl_year_col"))
+
+    if df_pl is None:
         st.error("P&L could not be parsed.")
     else:
-        if df_raw.shape[1] > 2:
-            year_map = detect_year_columns_fixed(df_raw)
-    
-            selected_col = st.selectbox(
-                "📅 Select year / column to model",
-                options=list(year_map.keys()),
-                format_func=lambda x: year_map[x]
-            )
-    
-            df_pl = pd.DataFrame({
-                "Line Item": df_raw["Line Item"],
-                "Amount": pd.to_numeric(df_raw[selected_col], errors="coerce").fillna(0)
-            })
-        else:
-            df_pl = df_raw.rename(columns={
-                df_raw.columns[0]: "Line Item",
-                df_raw.columns[1]: "Amount"
-            })
-    
-        # ✅ Now classify AFTER fixing structure
         df_pl = classify_pl(df_pl, use_ai=use_ai, api_key=api_key or "")
 
     st.markdown("---")
@@ -1690,7 +1680,7 @@ if pl_metrics and pl_metrics.get("EBITDA", 0) > 0:
                 f"- **Sector:** {r['sector']}\n"
                 f"- **Revenue tier:** {r['revenue_tier']}\n"
                 f"- **Margin quality:** {r['margin_quality']}\n"
-                f"- **Current leverage (BS):** {r['leverage_ratio']}\n"
+                f"- **Leverage:** {r['leverage_ratio']}\n"
                 f"- **Suggested entry:** {r['suggested_entry']} | "
                 f"**exit:** {r['suggested_exit']}"
             )
