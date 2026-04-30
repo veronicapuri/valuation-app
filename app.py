@@ -2,43 +2,6 @@
 SME Valuation & LBO Tool  ·  Production-ready
 ==============================================
 Singapore / SEA SME buyout modelling.
-
-FIXES APPLIED (annotated with WHY at each site):
-  BUG-1  read_any_file()     — HTTP-encoded attribute access broke file parsing
-  BUG-2  smart_clean()       — HTTP-encoded method calls broke column detection
-  BUG-3  load_and_combine()  — HTTP-encoded pd.read_csv / pd.read_excel calls
-  BUG-4  detect_year_columns — HTTP-encoded re.search prevented year detection
-  BUG-5  sidebar sliders     — HTTP-encoded st.session_state references silently
-                               returned None, corrupting every default slider value
-  BUG-6  chart helpers       — HTTP-encoded go.Bar / go.Scatter constructors
-  BUG-7  data_editor calls   — HTTP-encoded st.data_editor prevented rendering
-  BUG-8  Excel export        — HTTP-encoded DataFrame.to_excel / BytesIO calls
-  BUG-9  IRR: payment-plan   — t=0 cashflow hardcoded to 0 is correct only when
-                               sponsor puts in NO cash at close; for non-zero
-                               equity_in this underestimates IRR. Fixed to
-                               start with -equity_in at t=0 and subtract
-                               payments from t=1…N.
-  BUG-10 Scenario builder    — base scenario blindly copied lbo_params which may
-                               not have "use_override_margin": True set,
-                               causing the model to fall back to raw EBITDA/rev
-                               ratio instead of the calibrated margin.
-  BUG-11 NWC delta year-0   — delta_nwc was 0 in year 0 unconditionally; this
-                               hides working-capital build at entry and overstates
-                               year-1 FCF.  Fixed: year-0 delta uses
-                               (nwc_y1 − initial_nwc) consistently.
-  BUG-12 Mandatory amort     — TLB amortisation was debited from cash AFTER
-                               the revolver draw check, so minimum-cash
-                               guard never triggered on amort. Reordered.
-  BUG-13 st.file_uploader   — f.seek(0) used http-encoded form in the loop;
-                               also upload reset is now clean.
-  BUG-14 Sensitivity grid    — lev_steps used floating-point set comprehension
-                               that could produce duplicate rounded values;
-                               replaced with explicit list.
-  BUG-15 Comps table display — COMPS_TABLE shown before files uploaded caused
-                               needless re-render; moved inside expander correctly
-                               (no code change needed — was already in expander).
-  STYLE  HTTP-artifact refs  — Every `[pd.read](http://pd.read)_csv` style
-                               markdown artefact replaced with plain Python.
 """
 
 import streamlit as st
