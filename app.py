@@ -945,8 +945,27 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     
     if params.get("use_payment_plan"):
         payment_schedule = params.get("payment_schedule", [])
-        equity_in = sum(payment_schedule)
-    
+        
+        equity_rollover = 0.0
+        
+        if params.get("use_equity_rollover"):
+            equity_rollover = entry_ev * params.get("equity_pct", 0.0)
+        
+        if params.get("use_payment_plan"):
+            payment_schedule = params.get("payment_schedule", [])
+            equity_in = sum(payment_schedule)
+        
+            # subtract rollover (you are not paying this)
+            equity_in = max(0, equity_in - equity_rollover)
+        
+            min_equity = entry_ev - target_debt
+            equity_in = max(equity_in, min_equity)
+        
+            total_debt = max(0, entry_ev - equity_in - equity_rollover)
+        else:
+            total_debt = target_debt
+            equity_in = entry_ev - total_debt + net_debt_bs
+            
         # enforce minimum equity from leverage
         min_equity = entry_ev - target_debt
         equity_in = max(equity_in, min_equity)
@@ -1052,7 +1071,13 @@ def run_lbo(metrics: dict, cash_bs: float, debt_bs: float, params: dict):
     lbo_df = pd.DataFrame(rows)
     last   = lbo_df.iloc[-1]
     exit_ev     = last["EBITDA"] * params["exit_multiple"]
-    exit_equity = exit_ev - last["Net Debt"]
+    gross_equity = exit_ev - last["Net Debt"]
+    
+    if params.get("use_equity_rollover"):
+        sponsor_ownership = 1 - params.get("equity_pct", 0.0)
+        exit_equity = gross_equity * sponsor_ownership
+    else:
+        exit_equity = gross_equity
 
     if exit_equity <= 0:
         return lbo_df, {
@@ -1357,6 +1382,17 @@ if use_payment_plan:
 if use_payment_plan and payment_schedule:
     st.sidebar.caption(f"Auto payments: {[int(p) for p in payment_schedule]}")
 
+st.sidebar.subheader("📈 Equity Structure")
+
+use_equity_rollover = st.sidebar.checkbox("Enable seller equity rollover")
+
+equity_pct = 0.0
+if use_equity_rollover:
+    equity_pct = st.sidebar.slider(
+        "Seller Equity %",
+        0, 50, 20
+    ) / 100
+    
 st.sidebar.subheader("Capital Structure")
 leverage_pct = st.sidebar.slider(
     "Leverage % of Entry EV", 0, 100,
@@ -1399,6 +1435,9 @@ params["use_payment_plan"] = use_payment_plan
 
 if use_payment_plan:
     params["payment_schedule"] = payment_schedule
+
+params["use_equity_rollover"] = use_equity_rollover
+params["equity_pct"] = equity_pct
 
 # =============================================================================
 # MAIN PAGE
@@ -1769,6 +1808,11 @@ if pl_metrics:
                 st.caption(
                     f"Funding mix: {equity_in/entry_ev:.0%} equity | {debt_used/entry_ev:.0%} debt"
                 )
+
+        if params.get("use_equity_rollover"):
+            seller_equity = params["equity_pct"]
+            st.caption(f"Seller retains {seller_equity:.0%} ownership")
+            
         # ── Deleveraging — Debt Paydown ─────────────────────────────
         st.subheader("📉 Deleveraging — Debt Paydown")
         
